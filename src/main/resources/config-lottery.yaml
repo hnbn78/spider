@@ -1,0 +1,7 @@
+apiplus:
+  -
+   lotteryCode: sd11x5
+   toCode:  sd11x5
+   period: 5000
+   route: newKcwFile
+   spiderIp: https://kaicai.net
