@@ -37,21 +37,21 @@ public class SimpleIssueConverter implements IssueConverter {
     public static void main(String[] args) {
         {
             SimpleIssueConverter converter = new SimpleIssueConverter(8, -1);
-            String expect = "20210220007";
+            String expect = "2021030815";
 
             System.out.println(converter.convert(expect));
         }
 
         {
             SimpleIssueConverter converter = new SimpleIssueConverter(8, 0);
-            String expect = "20210220007";
+            String expect = "2021030815";
 
             System.out.println(converter.convert(expect));
             ;
         }
         {
             SimpleIssueConverter converter = new SimpleIssueConverter(8, 1);
-            String expect = "20210220007";
+            String expect = "2021030815";
 
             System.out.println(converter.convert(expect));
             ;

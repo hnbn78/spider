@@ -1545,11 +1545,22 @@ public class ApiPlusService {
         }
 
         for (ManyCaiAM entry : issues) {
+        	 if (queue.contains(entry.getIssue())) {
+        		 continue;
+        	 }
             Date onlineDateTime = null;
             String issue = entry.getIssue();
             
             if(drawConfig.getToCode().contains("GD11X5")||drawConfig.getToCode().contains("SD11X5")) {
             	issue = "20"+entry.getIssue();
+            }
+            if(drawConfig.getToCode().contains("XGLHC")) {
+            	issue = "20"+entry.getIssue();
+            	String [] issueArr =entry.getIssue().split("/");
+            	issue = issueArr[1];
+            }
+            if (drawConfig.getConverter() != null) {
+                issue = drawConfig.getConverter().convert(issue);
             }
             String onlineStr = entry.getOpendate();
             try {
@@ -1557,13 +1568,26 @@ public class ApiPlusService {
             } catch (ParseException e) {
                 logger.error(e.getMessage(), e);
             }
-            if (!queue.contains(issue)) {
-                String lotteryNumber = null;
-                lotteryNumber = entry.getCode();
-                notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, lotteryNumber, onlineStr,
-                        String.valueOf(onlineDateTime.getTime() / 1000), null);
-                queue.add(issue);
+            String lotteryNumber = null;
+            lotteryNumber = entry.getCode();
+            if(drawConfig.getToCode().contains("XGLHC")) {
+            	lotteryNumber=lotteryNumber.replaceAll("+", ",");
             }
+            if(drawConfig.getToCode().contains("11X5")||drawConfig.getToCode().contains("XGLHC")) {
+            	StringBuffer codeStr=new StringBuffer();
+                String []codeArr = lotteryNumber.split(",");
+                for(String tempCode: codeArr) {
+	            	 String formatCode =  String.format("%02d", Integer.parseInt(tempCode));
+	            	 if(codeStr.length()>0) {
+	            		 codeStr.append(",");
+	            	 }
+	            	 codeStr.append(formatCode);
+                }
+            	 lotteryNumber=codeStr.toString();
+            }
+            notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, lotteryNumber, onlineStr,
+                    String.valueOf(onlineDateTime.getTime() / 1000), null);
+            queue.add(issue);
         }
         while (queue.size() > 10) {
             queue.poll();
