@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -111,6 +112,8 @@ import com.a3.lottery.domain.XingCaiVo;
 import com.a3.lottery.domain.XycIssueAM;
 import com.a3.lottery.domain.XycIssueInfo;
 import com.a3.lottery.domain.XycIssueItem;
+import com.a3.lottery.domain.YiLiuBaDataAM;
+import com.a3.lottery.domain.YiLiuBaDataVo;
 import com.a3.lottery.domain.config.DrawConfig;
 import com.a3.lottery.domain.config.PlatformConfig;
 import com.a3.lottery.spider.core.BossGroup;
@@ -264,12 +267,344 @@ public class ApiPlusService {
         	getFromNewKcwFile(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("caipiaoapiCCFile")) {
         	getCaipiaoapiCCFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("heneiQiqu")) {
+        	getHeneiQiquApi(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("heneiQiquFile")) {
+        	getHeneiQiquFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApi")) {
+        	get168KjApi(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApiFile")) {
+        	getHeneiQiquFile(drawConfig, queue);
         }else {
-            getFromApiPlus(drawConfig, queue);
+        	get168KjApiFile(drawConfig, queue);
         }
     }
     
-    private void getFromNewKcw(DrawConfig drawConfig, Queue<String> queue) {
+    private void get168KjApi(DrawConfig drawConfig, Queue<String> queue) {
+		String url="/pks/getLotteryPksInfo.do?lotCode="+drawConfig.getToCode();
+		String spiderIp = drawConfig.getSpiderIp();
+		
+		if(StringUtils.isBlank(spiderIp)) {
+			spiderIp="https://api.api68.com";
+		}
+		
+		String response = get(spiderIp, url);
+	    logger.info("{} ,url:{} ,get168KjApi spider:{}" ,drawConfig.getToCode(),url,response);
+	    
+	    YiLiuBaDataAM yiLiuBaDataAM= null;
+	    
+	    if(StringUtils.isBlank(response)){
+	    	return;
+	    }
+	    try {
+	    	yiLiuBaDataAM = gson.fromJson(response, new TypeToken<YiLiuBaDataAM>() {
+            }.getType());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (yiLiuBaDataAM == null || yiLiuBaDataAM.getResult()==null) {
+            return;
+        }
+        YiLiuBaDataVo yiLiuBaDataVo=yiLiuBaDataAM.getResult();
+        
+        if (yiLiuBaDataVo == null || yiLiuBaDataVo.getData()==null) {
+            return;
+        }
+        NewKjapiFreeItem newKjapiFreeItem=yiLiuBaDataVo.getData();
+        if (newKjapiFreeItem == null ) {
+            return;
+        }
+        String issueNoStr =newKjapiFreeItem.getPreDrawIssue();
+        if (queue.contains(issueNoStr)) {
+	    	return;
+	    }
+        Date onlineDateTime = null;
+        String onlineStr =newKjapiFreeItem.getPreDrawTime();
+        try {
+            onlineDateTime = SimpleParse.parse(String.valueOf(onlineStr));
+        } catch (ParseException e) {
+            logger.error(e.getMessage(), e);
+        }
+        String code=newKjapiFreeItem.getPreDrawCode();
+        if(drawConfig.getLotteryCode().contains("LHECXJW")) {
+        	code = formatLow10OpenCode(code);
+        }
+        
+        notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issueNoStr, newKjapiFreeItem.getPreDrawCode(),
+        		onlineStr, String.valueOf(onlineDateTime.getTime()/1000), null);
+        queue.add(issueNoStr);
+       
+        while (queue.size() > QUEUE_MAX_SIZE) {
+            queue.poll();
+        }
+	}
+	
+	private void get168KjApiFile(DrawConfig drawConfig, Queue<String> queue) {
+		String url="/pks/getLotteryPksInfo.do?lotCode="+drawConfig.getToCode();
+		String spiderIp = drawConfig.getSpiderIp();
+		
+		if(StringUtils.isBlank(spiderIp)) {
+			spiderIp="https://api.api68.com";
+		}
+		
+		String response = get(spiderIp, url);
+	    logger.info("{} ,url:{} ,get168KjApi spider:{}" ,drawConfig.getToCode(),url,response);
+	    
+	    YiLiuBaDataAM yiLiuBaDataAM= null;
+	    
+	    if(StringUtils.isBlank(response)){
+	    	return;
+	    }
+	    try {
+	    	yiLiuBaDataAM = gson.fromJson(response, new TypeToken<YiLiuBaDataAM>() {
+            }.getType());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (yiLiuBaDataAM == null || yiLiuBaDataAM.getResult()==null) {
+            return;
+        }
+        YiLiuBaDataVo yiLiuBaDataVo=yiLiuBaDataAM.getResult();
+        
+        if (yiLiuBaDataVo == null || yiLiuBaDataVo.getData()==null) {
+            return;
+        }
+        NewKjapiFreeItem newKjapiFreeItem=yiLiuBaDataVo.getData();
+        if (newKjapiFreeItem == null ) {
+            return;
+        }
+        String issueNoStr =newKjapiFreeItem.getPreDrawIssue();
+        if (queue.contains(issueNoStr)) {
+	    	return;
+	    }
+        Date onlineDateTime = null;
+        String onlineStr =newKjapiFreeItem.getPreDrawTime();
+        try {
+            onlineDateTime = SimpleParse.parse(String.valueOf(onlineStr));
+        } catch (ParseException e) {
+            logger.error(e.getMessage(), e);
+        }
+        String code=newKjapiFreeItem.getPreDrawCode();
+        if(drawConfig.getLotteryCode().contains("LHECXJW")) {
+        	code = formatLow10OpenCode(code);
+        }
+        
+        LotteryIssueResult issueResult = new LotteryIssueResult();
+        issueResult.setCode(code);
+        issueResult.setIssue(issueNoStr);
+        issueResult.setTime(onlineStr);
+        issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+        writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+        queue.add(issueNoStr);
+        while (queue.size() > QUEUE_MAX_SIZE) {
+            queue.poll();
+        }
+	}
+    
+    private void getHeneiQiquApi(DrawConfig drawConfig, Queue<String> queue) {
+    	String url="https://api.fhlmapi.com/api/fhlm/HN60/5";
+    	String heNeiRes = httpConnectionManager.get(url);
+    	
+    	logger.info("HEINEI60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,heNeiRes);
+    	
+    	url="https://77tj001.org/api/tencent/onlineim";
+    	String qiQuRes = httpConnectionManager.get(url);
+    	logger.info("QIQU60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,qiQuRes);
+    	
+        ArrayList<TencentOnline> qiQuIssues = null;
+        if (!StringUtils.isEmpty(qiQuRes)) {
+            try {
+            	qiQuIssues = gson.fromJson(qiQuRes, new TypeToken<ArrayList<TencentOnline>>() {
+                }.getType());
+            } catch (Exception e) {
+            }
+        }
+        if (qiQuIssues == null) {
+            return;
+        }
+        if (CollectionUtils.isEmpty(qiQuIssues)) {
+            return;
+        }
+        
+        FengHuangVo fengHuangVo=null;
+	    
+	    if(StringUtils.isBlank(heNeiRes)){
+	    	return;
+	    }
+	    try {
+	    	fengHuangVo = gson.fromJson(heNeiRes, new TypeToken<FengHuangVo>() {
+            }.getType());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (fengHuangVo == null || fengHuangVo.getData()==null) {
+            return;
+        }
+        List<FengHuangItemVo> heNeList= fengHuangVo.getData();
+        
+        if(CollectionUtils.isEmpty(heNeList)){
+        	return;
+        }
+        Map<String,FengHuangItemVo> heNeiMap = new HashMap<>();
+        for(FengHuangItemVo heNeiGwItem: heNeList){
+        	String issueNoStr = heNeiGwItem.getIssue();
+        	heNeiMap.put(issueNoStr, heNeiGwItem);
+        }
+
+        for (TencentOnline entry : qiQuIssues) {
+        	if(queue.contains(entry.getOnlinetime())) {
+            	continue;
+            }
+            Date onlineDateTime = null;
+            try {
+                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            String issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+            
+            if(!heNeiMap.containsKey(issue)) {
+            	continue;
+            }
+            TencentOnline tencentOnline = entry;
+            String QiquNumber = buildTencentNumber(tencentOnline.getOnlinenumber());
+            FengHuangItemVo fengHuangItemVo = heNeiMap.get(issue);
+            String heiNeiNumber= formatOpenCode(fengHuangItemVo.getCode());
+            
+            String [] numArr = new String[5];
+            String[] qiQuNumberArr =QiquNumber.split(",");
+            String[] heNeiNumberArr =heiNeiNumber.split(",");
+            
+            for(int i=0;i<qiQuNumberArr.length;i++) {
+            	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
+            	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
+            	
+            	int c = (a+b)%10;
+            	numArr[i]=String.valueOf(c);
+            }
+            String code = StringUtils.join(numArr, ",");
+            String onlineTime = tencentOnline.getOnlinetime();
+            String timestamp = "";
+            try {
+                timestamp = SimpleParse.parse(onlineTime).getTime() / 1000 + "";
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            logger.info("getHeneiQiquApi shengcheng :{} ,{}" ,issue,code);
+            notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, code,
+            		onlineTime, timestamp, null);
+            queue.add(entry.getOnlinetime());
+        }
+
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+	}
+    
+    private void getHeneiQiquFile(DrawConfig drawConfig, Queue<String> queue) {
+    	String url="https://api.fhlmapi.com/api/fhlm/HN60/5";
+    	String heNeiRes = httpConnectionManager.get(url);
+    	
+    	logger.info("HEINEI60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,heNeiRes);
+    	
+    	url="https://77tj001.org/api/tencent/onlineim";
+    	String qiQuRes = httpConnectionManager.get(url);
+    	logger.info("QIQU60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,qiQuRes);
+    	
+        ArrayList<TencentOnline> qiQuIssues = null;
+        if (!StringUtils.isEmpty(qiQuRes)) {
+            try {
+            	qiQuIssues = gson.fromJson(qiQuRes, new TypeToken<ArrayList<TencentOnline>>() {
+                }.getType());
+            } catch (Exception e) {
+            }
+        }
+        if (qiQuIssues == null) {
+            return;
+        }
+        if (CollectionUtils.isEmpty(qiQuIssues)) {
+            return;
+        }
+        
+        FengHuangVo fengHuangVo=null;
+	    
+	    if(StringUtils.isBlank(heNeiRes)){
+	    	return;
+	    }
+	    try {
+	    	fengHuangVo = gson.fromJson(heNeiRes, new TypeToken<FengHuangVo>() {
+            }.getType());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (fengHuangVo == null || fengHuangVo.getData()==null) {
+            return;
+        }
+        List<FengHuangItemVo> heNeList= fengHuangVo.getData();
+        
+        if(CollectionUtils.isEmpty(heNeList)){
+        	return;
+        }
+        Map<String,FengHuangItemVo> heNeiMap = new HashMap<>();
+        for(FengHuangItemVo heNeiGwItem: heNeList){
+        	String issueNoStr = heNeiGwItem.getIssue();
+        	heNeiMap.put(issueNoStr, heNeiGwItem);
+        }
+
+        for (TencentOnline entry : qiQuIssues) {
+        	if(queue.contains(entry.getOnlinetime())) {
+            	continue;
+            }
+            Date onlineDateTime = null;
+            try {
+                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            String issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+            
+            if(!heNeiMap.containsKey(issue)) {
+            	continue;
+            }
+            TencentOnline tencentOnline = entry;
+            String QiquNumber = buildTencentNumber(tencentOnline.getOnlinenumber());
+            FengHuangItemVo fengHuangItemVo = heNeiMap.get(issue);
+            String heiNeiNumber= formatOpenCode(fengHuangItemVo.getCode());
+            
+            String [] numArr = new String[5];
+            String[] qiQuNumberArr =QiquNumber.split(",");
+            String[] heNeiNumberArr =heiNeiNumber.split(",");
+            
+            for(int i=0;i<qiQuNumberArr.length;i++) {
+            	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
+            	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
+            	
+            	int c = (a+b)%10;
+            	numArr[i]=String.valueOf(c);
+            }
+            String code = StringUtils.join(numArr, ",");
+            String onlineTime = tencentOnline.getOnlinetime();
+//            String timestamp = "";
+//            try {
+//                timestamp = SimpleParse.parse(onlineTime).getTime() / 1000 + "";
+//            } catch (ParseException e) {
+//                e.printStackTrace();
+//            }
+            logger.info("getHeneiQiquApi shengcheng :{} ,{}" ,issue,code);
+            queue.add(entry.getOnlinetime());
+            LotteryIssueResult issueResult = new LotteryIssueResult();
+            issueResult.setCode(code);
+            issueResult.setIssue(issue);
+            issueResult.setTime(onlineTime);
+            issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+            writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+        }
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+	}
+
+	private void getFromNewKcw(DrawConfig drawConfig, Queue<String> queue) {
     	//https://kaicai.net/api/trial/drawResult?code=jx11x5&format=json&rows=5
     	String spiderIp = drawConfig.getSpiderIp();
         String url = spiderIp+"/api/trial/drawResult?code="+drawConfig.getToCode()+"&format=json&rows=5";
@@ -3091,6 +3426,24 @@ public class ApiPlusService {
         return resultCode;
     }
     
+    public static String formatLow10OpenCode(String code){
+   	    String[] numStrs = code.split(",");
+
+        String[] resultNums = new String[numStrs.length];
+
+        for (int i = 0; i < numStrs.length; i++) {
+        	String tempStr = String.valueOf(numStrs[i]);
+        	int a = Integer.valueOf(tempStr);
+        
+        	if(a<10) {
+        		tempStr="0"+a;
+        	}
+            resultNums[i] = tempStr;
+        }
+        String resultCode = StringUtils.join(resultNums, ',');
+        return resultCode;
+   }
+    
     public static String formatOpenCode(String code){
     	 String[] numStrs = code.split("");
 
@@ -3235,15 +3588,19 @@ public class ApiPlusService {
 //        String issue = String.format("%04d", 1003);
 //        System.out.println(issue);
         // 1574066468
-   	 String[] numStrs = "98786".split("");
-
-     int[] resultNums = new int[numStrs.length];
-
-     for (int i = 0; i < resultNums.length; i++) {
-         resultNums[i] = Integer.valueOf(numStrs[i]);
-     }
-     String resultCode = StringUtils.join(resultNums, ',');
-     System.out.println(resultCode);
+//   	 String[] numStrs = "98786".split("");
+//
+//     int[] resultNums = new int[numStrs.length];
+//
+//     for (int i = 0; i < resultNums.length; i++) {
+//         resultNums[i] = Integer.valueOf(numStrs[i]);
+//     }
+//     String resultCode = StringUtils.join(resultNums, ',');
+//     System.out.println(resultCode);
+    	int a = 7;
+    	int b=5;
+    	int c=(a+b)%10;
+    	System.out.println(c);
     }
 
 }
