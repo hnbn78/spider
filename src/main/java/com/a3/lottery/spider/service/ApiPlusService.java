@@ -274,9 +274,9 @@ public class ApiPlusService {
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApi")) {
         	get168KjApi(drawConfig, queue);
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApiFile")) {
-        	getHeneiQiquFile(drawConfig, queue);
-        }else {
         	get168KjApiFile(drawConfig, queue);
+        }else {
+        	getFromApiPlus(drawConfig, queue);
         }
     }
     
@@ -287,8 +287,13 @@ public class ApiPlusService {
 		if(StringUtils.isBlank(spiderIp)) {
 			spiderIp="https://api.api68.com";
 		}
+		if(drawConfig.getLotteryCode().contains("LHECXJW")) {
+			url=spiderIp+"/smallSix/findSmallSixInfo.do";
+	    }else {
+	    	url=spiderIp+url;
+	    }
 		
-		String response = get(spiderIp, url);
+		String response = httpConnectionManager.get(url);
 	    logger.info("{} ,url:{} ,get168KjApi spider:{}" ,drawConfig.getToCode(),url,response);
 	    
 	    YiLiuBaDataAM yiLiuBaDataAM= null;
@@ -346,8 +351,13 @@ public class ApiPlusService {
 		if(StringUtils.isBlank(spiderIp)) {
 			spiderIp="https://api.api68.com";
 		}
+		if(drawConfig.getLotteryCode().contains("LHECXJW")) {
+			url=spiderIp+"/smallSix/findSmallSixInfo.do";
+	    }else {
+	    	url=spiderIp+url;
+	    }
 		
-		String response = get(spiderIp, url);
+		String response = httpConnectionManager.get(url);
 	    logger.info("{} ,url:{} ,get168KjApi spider:{}" ,drawConfig.getToCode(),url,response);
 	    
 	    YiLiuBaDataAM yiLiuBaDataAM= null;
