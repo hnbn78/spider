@@ -275,12 +275,70 @@ public class ApiPlusService {
         	get168KjApi(drawConfig, queue);
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApiFile")) {
         	get168KjApiFile(drawConfig, queue);
-        }else {
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("77tjnew")) {
+            getFrom77tjnewApi(drawConfig, queue);
+        } else {
         	getFromApiPlus(drawConfig, queue);
         }
     }
     
-    private void get168KjApi(DrawConfig drawConfig, Queue<String> queue) {
+    private void getFrom77tjnewApi(DrawConfig drawConfig, Queue<String> queue) {
+    	String spiderIp = drawConfig.getSpiderIp();
+		
+		if(StringUtils.isBlank(spiderIp)) {
+			spiderIp="https://77tj001.org/api/tencent/onlineim";
+		}
+		
+    	String qiQuRes = httpConnectionManager.get(spiderIp);
+    	logger.info("QIQU60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,spiderIp,qiQuRes);
+    	
+        ArrayList<TencentOnline> qiQuIssues = null;
+        if (!StringUtils.isEmpty(qiQuRes)) {
+            try {
+            	qiQuIssues = gson.fromJson(qiQuRes, new TypeToken<ArrayList<TencentOnline>>() {
+                }.getType());
+            } catch (Exception e) {
+            }
+        }
+        if (qiQuIssues == null) {
+            return;
+        }
+        if (CollectionUtils.isEmpty(qiQuIssues)) {
+            return;
+        }
+
+        for (TencentOnline entry : qiQuIssues) {
+        	if(queue.contains(entry.getOnlinetime())) {
+            	continue;
+            }
+            Date onlineDateTime = null;
+            try {
+                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            String issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+            
+            TencentOnline tencentOnline = entry;
+            String QiquNumber = buildTencentNumber(tencentOnline.getOnlinenumber());
+            String onlineTime = tencentOnline.getOnlinetime();
+            String timestamp = "";
+            try {
+                timestamp = SimpleParse.parse(onlineTime).getTime() / 1000 + "";
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, QiquNumber,
+            		onlineTime, timestamp, null);
+            queue.add(entry.getOnlinetime());
+        }
+
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+	}
+
+	private void get168KjApi(DrawConfig drawConfig, Queue<String> queue) {
 		String url="/pks/getLotteryPksInfo.do?lotCode="+drawConfig.getToCode();
 		String spiderIp = drawConfig.getSpiderIp();
 		
@@ -358,7 +416,7 @@ public class ApiPlusService {
 	    }
 		
 		String response = httpConnectionManager.get(url);
-	    logger.info("{} ,url:{} ,get168KjApi spider:{}" ,drawConfig.getToCode(),url,response);
+	    logger.info("{} ,url:{} ,get168KjApiFile spider:{}" ,drawConfig.getToCode(),url,response);
 	    
 	    YiLiuBaDataAM yiLiuBaDataAM= null;
 	    
@@ -397,6 +455,7 @@ public class ApiPlusService {
         String code=newKjapiFreeItem.getPreDrawCode();
         if(drawConfig.getLotteryCode().contains("LHECXJW")) {
         	code = formatLow10OpenCode(code);
+        	logger.info("get168KjApiFile LHECXJW beforeCode:{}, afterCode:{}",newKjapiFreeItem.getPreDrawCode(),code);
         }
         
         LotteryIssueResult issueResult = new LotteryIssueResult();
@@ -2062,6 +2121,12 @@ public class ApiPlusService {
                 continue;
             }
             
+            boolean isHeiNeiQiQuSerise = handHeiNeiQiQuSscSeries(lotteryCode, issueBean);
+
+            if (toLotteryCode.equals("HEQI60SSC") && !isHeiNeiQiQuSerise) {
+                continue;
+            }
+            
             if (!queue.contains(issueBean.getIssue())) {
                 queue.add(issueBean.getIssue());
                 String kenoCode = issueBean.getCode();
@@ -2107,7 +2172,9 @@ public class ApiPlusService {
 
     }
 
-    private boolean handQiQuSscSeries(String lotteryCode, LotteryIssueResult issueBean) {
+   
+
+	private boolean handQiQuSscSeries(String lotteryCode, LotteryIssueResult issueBean) {
         String txffcIssue = issueBean.getIssue();
         if (!lotteryCode.equals("QIQU180SSC") && !lotteryCode.equals("QIQU300SSC")
                 && !lotteryCode.equals("QIQU600SSC")) {
@@ -2142,6 +2209,42 @@ public class ApiPlusService {
         issueBean.setIssue(issueNum);
         return true;
     }
+	
+	 private boolean handHeiNeiQiQuSscSeries(String lotteryCode, LotteryIssueResult issueBean) {
+		 String txffcIssue = issueBean.getIssue();
+	        if (!lotteryCode.equals("HEQI180SSC") && !lotteryCode.equals("HEQI300SSC")
+	                && !lotteryCode.equals("HEQI600SSC")) {
+	            return true;
+	        }
+	        String dateStr = txffcIssue.split("-")[0];
+	        int issueIndex = Integer.parseInt(txffcIssue.split("-")[1]);
+
+	        if (lotteryCode.equals("HEQI180SSC") && issueIndex % 3 != 0) {
+	            return false;
+	        }
+	        if (lotteryCode.equals("HEQI300SSC") && issueIndex % 5 != 0) {
+	            return false;
+	        }
+	        if (lotteryCode.equals("HEQI600SSC") && issueIndex % 10 != 0) {
+	            return false;
+	        }
+	        String issueNum = null;
+
+	        int mod = 0;
+	        if (lotteryCode.equals("HEQI300SSC")) {
+	            mod = issueIndex / 5;
+	        }
+	        if (lotteryCode.equals("HEQI180SSC")) {
+	            mod = issueIndex / 3;
+	        }
+	        if (lotteryCode.equals("HEQI600SSC")) {
+	            mod = issueIndex / 10;
+	        }
+	        issueNum = dateStr + "-" + String.format("%03d", mod);
+	        logger.info("***************河腾分分彩：{},本来奖期：{},需要转换成:{}", lotteryCode, txffcIssue, issueNum);
+	        issueBean.setIssue(issueNum);
+	        return true;
+		}
     
     private boolean handNewQiQuSscSeries(String lotteryCode, LotteryIssueResult issueBean) {
         String txffcIssue = issueBean.getIssue();
@@ -3607,10 +3710,13 @@ public class ApiPlusService {
 //     }
 //     String resultCode = StringUtils.join(resultNums, ',');
 //     System.out.println(resultCode);
-    	int a = 7;
-    	int b=5;
-    	int c=(a+b)%10;
-    	System.out.println(c);
+//    	int a = 7;
+//    	int b=5;
+//    	int c=(a+b)%10;
+//    	System.out.println(c);
+    	String code = "31,29,37,28,5,14,11";
+    	String formatLow10OpenCode = formatLow10OpenCode(code);
+    	System.out.println(formatLow10OpenCode);
     }
 
 }
