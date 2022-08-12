@@ -60,6 +60,24 @@ public class SHA256Util {
         }
         return StringUtils.join(list, ",");
     }
+    
+    public static String getNumFromSha256Str2(String str) {
+        // f14864c08e8fabd0fe5ce0d62af2c484b34bc25affddf4c959e7ffae03f5425d
+        str = str.trim();
+        List<Integer> list = new ArrayList<>();
+        if (str != null && !"".equals(str)) {
+            for (int i = 0; i <= str.length() - 1; i++) {
+                if (list.size() >= 5) {
+                    break;
+                }
+                if (str.charAt(i) >= 48 && str.charAt(i) <= 57) {
+                    Integer charAt = str.charAt(i) - '0';
+                    list.add(charAt);
+                }
+            }
+        }
+        return StringUtils.join(list, ",");
+    }
 
     public static String getPk10NumFromSha256Str(String str) {
         str = str.trim();
@@ -104,19 +122,8 @@ public class SHA256Util {
     }
 
     public static void main(String[] args) {
-        // List<String> a = new ArrayList<>();
-        // List<String> b = new ArrayList<>();
-        // a.add("a1");
-        // a.add("a2");
-        //
-        // b.add("b1");
-        // b.add("b2");
-        // a.addAll(0, b);
-        // for (String str : a) {
-        // System.out.println(str);
-        // }
-        String k = "3892873";
-        String sha256StrJava = getSHA256StrJava(k);
-        System.out.println(sha256StrJava);
+    	String sha256StrJava= "f14864c08e8fabd0fe5ce0d62af2c484b34bc25affddf4c959e7ffae03f5425d";
+		String code = SHA256Util.getNumFromSha256Str(sha256StrJava);
+        System.out.println(code);
     }
 }

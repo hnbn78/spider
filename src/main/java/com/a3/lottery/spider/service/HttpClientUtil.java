@@ -8,9 +8,12 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.ParseException;
+import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.config.CookieSpecs;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
@@ -45,6 +48,27 @@ public class HttpClientUtil {
         // 使用MD5对待签名串求签
         return DigestUtils.md5Hex(basestring.toString()).toUpperCase();
     }
+    
+    public static void main(String[] args) throws Exception {
+    	String url  = "https://77tj.org/api/tencent/onlineim";
+		HttpClient httpclient = HttpClientFactory.getSSLHttpClientInstance();
+		HttpGet httpGet = new HttpGet(url);
+		
+		httpGet.setHeader("cookie","cf_chl_2=e4011f34c59ca31; cf_chl_prog=x12; cf_clearance=GQ02rkC2mMg2dLYDTZmdz5TDDMPIw5EFxNUf6cQabP0-1641712556-0-150; tc_cookie_name=61166e3acf614f9cb2463d394726557e");
+		httpGet.setHeader("user-agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36");
+		//httpGet.setHeader("device_info","Windows NT 10.0 Google Inc. Windows NT 10.0; Win64; x64");
+		HttpResponse response = null;
+		RequestConfig requestConfig = RequestConfig.custom().setSocketTimeout(30000).setConnectTimeout(30000)
+	 		.setCookieSpec(CookieSpecs.STANDARD_STRICT).build();// 设置请求和传输超时时间
+
+		httpGet.setConfig(requestConfig);
+		 response = httpclient.execute(httpGet);
+		 if (response.getStatusLine().getStatusCode() != 200) {
+		     response = httpclient.execute(httpGet);
+		 }
+		 String strFromResponse = HttpClientUtil.getStrFromResponse(response);
+		 System.out.println(strFromResponse);
+	}
 
     /**
      * 读返回数据
@@ -228,5 +252,17 @@ public class HttpClientUtil {
             }
         }
         return map;
+    }
+    
+    public static String getStrFromResponse(HttpResponse httpResponse)
+            throws ParseException, IOException {
+    	String str=null;
+        HttpEntity entity = httpResponse.getEntity();
+        // 响应状态
+        // 判断响应实体是否为空
+        if (entity != null) {
+        	str = EntityUtils.toString(entity, "UTF-8");
+        }
+        return str;
     }
 }

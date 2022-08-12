@@ -79,6 +79,27 @@ public class TecentMmaService {
         String issue = dateStr + "-" + String.format("%04d", index);
         return issue;
     }
+    
+    public static String buidl1440IssueByTimeStamp(Long timeStamp) {
+    	
+        String dateStr = new SimpleDateFormat("yyyyMMdd").format(new Date());
+
+        Calendar c = Calendar.getInstance();
+        c.setTime(new Date(timeStamp));
+        int h = c.get(Calendar.HOUR_OF_DAY);
+        int m = c.get(Calendar.MINUTE);
+
+        int index = 0;
+        if (h > 0 || m > 0) {
+            index = h * 60 + m;
+        } else {
+            Integer dayTimeIndex = Integer.valueOf(dateStr);
+            dateStr = String.valueOf(dayTimeIndex - 1);
+            index = 1440;
+        }
+        String issue = dateStr + "-" + String.format("%04d", index);
+        return issue;
+    }
 
     public static String buidlTencent30SSCIssue() {
         String dateStr = new SimpleDateFormat("yyyyMMdd").format(new Date());

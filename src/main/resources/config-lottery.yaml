@@ -1,7 +1,7 @@
 apiplus:
   -
-   lotteryCode: sd11x5
-   toCode:  sd11x5
+   lotteryCode: HEQI60SSC
+   toCode: HEQI60SSC
    period: 5000
-   route: newKcwFile
-   spiderIp: https://kaicai.net
+   route: cnd28File
+   filePath: /data/openResult/HEQI60SSC

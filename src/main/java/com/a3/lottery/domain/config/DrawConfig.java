@@ -1,13 +1,19 @@
 package com.a3.lottery.domain.config;
 
+import java.io.Serializable;
+
 import org.apache.commons.lang3.StringUtils;
 
 import com.a3.lottery.spider.decode.IssueConverter;
 import com.a3.lottery.spider.decode.SimpleIssueConverter;
 
-public class DrawConfig extends WorkerConfig {
+public class DrawConfig extends WorkerConfig implements Serializable, Cloneable {
 
-    private String lotteryCode;
+    /**
+	 * 
+	 */
+	private static final long serialVersionUID = 16L;
+	private String lotteryCode;
     private String toCode;
     private String issueConverter;
     private Long period;

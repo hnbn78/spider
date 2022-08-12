@@ -109,6 +109,9 @@ public class HttpConnectionManager {
                 .setConnectTimeout(timeOut).setSocketTimeout(timeOut).build();
         httpRequestBase.setConfig(requestConfig);
     }
+    
+    
+  
 
     public CloseableHttpClient getHttpClient() {
         // 请求重试处理
@@ -243,4 +246,68 @@ public class HttpConnectionManager {
             e.printStackTrace();
         }
     }
+    
+    public String postByJson(String path, String jsonParam) {
+        CloseableHttpClient httpClient = getHttpClient();
+        HttpPost httpPost = new HttpPost(path);
+        httpPost.addHeader("Content-Type", "application/json");
+        config(httpPost);
+        String json = null;
+        CloseableHttpResponse response = null;
+
+        StringEntity stringEntity = new StringEntity(jsonParam,"UTF-8");
+        stringEntity.setContentType("application/json");
+        httpPost.setEntity(stringEntity);
+        try {
+            response = httpClient.execute(httpPost);
+            HttpEntity entity = response.getEntity();
+            json = EntityUtils.toString(entity, "UTF-8");
+        } catch (UnsupportedOperationException e) {
+            LOGGER.error(e.getMessage(), e);
+        } catch (IOException e) {
+            LOGGER.error(e.getMessage(), e);
+        } finally {
+            if (response != null) {
+                try {
+                    response.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        return json;
+    }
+    
+    public String postTrx(String path, String jsonParam,String apiKey) {
+        CloseableHttpClient httpClient = getHttpClient();
+        HttpPost httpPost = new HttpPost(path);
+        httpPost.addHeader("Content-Type", "application/json");
+        httpPost.addHeader("TRON-PRO-API-KEY", apiKey);	
+        config(httpPost);
+        String json = null;
+        CloseableHttpResponse response = null;
+
+        StringEntity stringEntity = new StringEntity(jsonParam,"UTF-8");
+        stringEntity.setContentType("application/json");
+        httpPost.setEntity(stringEntity);
+        try {
+            response = httpClient.execute(httpPost);
+            HttpEntity entity = response.getEntity();
+            json = EntityUtils.toString(entity, "UTF-8");
+        } catch (UnsupportedOperationException e) {
+            LOGGER.error(e.getMessage(), e);
+        } catch (IOException e) {
+            LOGGER.error(e.getMessage(), e);
+        } finally {
+            if (response != null) {
+                try {
+                    response.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        return json;
+    }
+
 }

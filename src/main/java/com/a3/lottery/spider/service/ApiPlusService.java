@@ -2,13 +2,17 @@ package com.a3.lottery.spider.service;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.StringReader;
 import java.io.UnsupportedEncodingException;
+import java.math.BigDecimal;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +37,7 @@ import org.apache.http.HttpException;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
+import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.DefaultConnectionReuseStrategy;
@@ -63,6 +68,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
+import org.tron.trident.core.ApiWrapper;
+import org.tron.trident.core.exceptions.IllegalException;
+import org.tron.trident.proto.Chain.Block;
+import org.tron.trident.proto.Response.BlockExtention;
+import org.tron.trident.proto.Response.BlockListExtention;
 
 import com.a3.lottery.domain.ApiPlusBean;
 import com.a3.lottery.domain.ApiPlushDataBean;
@@ -89,6 +99,10 @@ import com.a3.lottery.domain.FlbSScIssue;
 import com.a3.lottery.domain.FlbSScIssueDetail;
 import com.a3.lottery.domain.HeNeiGwItem;
 import com.a3.lottery.domain.HeNeiGwVo;
+import com.a3.lottery.domain.HuoBiAM;
+import com.a3.lottery.domain.HuoBiItem;
+import com.a3.lottery.domain.JB28ApiAM;
+import com.a3.lottery.domain.Jb28DataItem;
 import com.a3.lottery.domain.LotteryDrawRequestBean;
 import com.a3.lottery.domain.LotteryDrawResponseBean;
 import com.a3.lottery.domain.LotteryIssueResult;
@@ -106,6 +120,9 @@ import com.a3.lottery.domain.TecentCjiujiuAM;
 import com.a3.lottery.domain.TecentMmaIssue;
 import com.a3.lottery.domain.Tencent6vcsIssue;
 import com.a3.lottery.domain.TencentOnline;
+import com.a3.lottery.domain.TrxBlock;
+import com.a3.lottery.domain.TrxBlockFenFenVo;
+import com.a3.lottery.domain.TrxHttpBlockAM;
 import com.a3.lottery.domain.TxZjshSscAM;
 import com.a3.lottery.domain.XingCaiItemVo;
 import com.a3.lottery.domain.XingCaiVo;
@@ -114,15 +131,19 @@ import com.a3.lottery.domain.XycIssueInfo;
 import com.a3.lottery.domain.XycIssueItem;
 import com.a3.lottery.domain.YiLiuBaDataAM;
 import com.a3.lottery.domain.YiLiuBaDataVo;
+import com.a3.lottery.domain.ZjXianShangAM;
 import com.a3.lottery.domain.config.DrawConfig;
 import com.a3.lottery.domain.config.PlatformConfig;
 import com.a3.lottery.spider.core.BossGroup;
 import com.a3.lottery.util.ConvertToKenoUtil;
 import com.a3.lottery.util.DateTransformer;
+import com.a3.lottery.util.EncryptUtil;
 import com.a3.lottery.util.MD5;
+import com.a3.lottery.util.SHA256Util;
 import com.a3.lottery.util.SHA512Util;
 import com.google.common.reflect.TypeToken;
 import com.google.gson.Gson;
+import com.google.gson.stream.JsonReader;
 
 @Component
 public class ApiPlusService {
@@ -136,8 +157,12 @@ public class ApiPlusService {
     private BossGroup bossGroup;
     @Autowired
     private HttpConnectionManager httpConnectionManager;
+    @Autowired
+    private TronDrawService tronDrawService;
 
     private static Gson gson = new Gson();
+    
+    private static final String PCODE = "web";
 
     public static final String ROUTE_API_PLUS = "apiplus";
 
@@ -146,6 +171,8 @@ public class ApiPlusService {
     private static final int CLIENT_SOCKET_TIMEOUT = 30000;
 
     private static final SimpleDateFormat SimpleParse = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static final SimpleDateFormat SimpleYEARParse = new SimpleDateFormat("yyyy-MM-dd");
+    private static final SimpleDateFormat SimpleParseFen = new SimpleDateFormat("yyyy-MM-dd HH:mm");
     private static final SimpleDateFormat SimpleParseDate = new SimpleDateFormat("yyyyMMdd");
 
     @Value("#{configProperties['domain.apiplus.host']}")
@@ -188,6 +215,8 @@ public class ApiPlusService {
      * 线程池
      */
     public static ExecutorService writeFilePool;
+    
+    private ApiWrapper client;
 
     static {
         writeFilePool = Executors.newFixedThreadPool(15,
@@ -198,6 +227,7 @@ public class ApiPlusService {
     public void init() {
         pool.setDefaultMaxPerRoute(50);
         pool.setMaxTotal(200);
+        client = ApiWrapper.ofMainnet("d2f1f7beb8da8c8a4f94a9e12800778f86973468dea098c55032c55a06627ec9", "2ab2a28a-2b0e-4f99-8811-cc47d614dd8f");
     }
 
     public void getResponse(DrawConfig drawConfig, Queue<String> queue) {
@@ -206,9 +236,12 @@ public class ApiPlusService {
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("caipiaokongFile")) {
             getFromCaipiaokongFile(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("77tj")) {
-            getFrom77tj(drawConfig, queue);
+            //getFrom77tj(drawConfig, queue);
+        	getFrom77tjOldHttp(drawConfig, queue);
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("77tjFile")) {
             getFrom77tjFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("77tjFile2")) {
+            getFrom77tjFile2(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("6vcs")) {
             getFrom6vcsTxssc(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("dsjt")) {
@@ -253,8 +286,8 @@ public class ApiPlusService {
         	heNeiGwFile(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("heNeiFHw")) {
         	heNeiFHw(drawConfig, queue);
-        } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("xingcaiapi")) {
-        	getXingCaiApi(drawConfig, queue);
+        }  else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("heNeiFHwFile")) {
+        	heNeiFHwFile(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("newkjapi")) {
         	getNewkjapi(drawConfig, queue);
         }  else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("newkjapiFile")) {
@@ -271,18 +304,1030 @@ public class ApiPlusService {
         	getHeneiQiquApi(drawConfig, queue);
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("heneiQiquFile")) {
         	getHeneiQiquFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("heneiQiquFile2")) {
+        	getHeneiQiquFile2(drawConfig, queue);
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApi")) {
         	get168KjApi(drawConfig, queue);
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApiFile")) {
         	get168KjApiFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("168kjApiFile2")) {
+        	get168KjApiFile2(drawConfig, queue);
         }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("77tjnew")) {
             getFrom77tjnewApi(drawConfig, queue);
-        } else {
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("77tjnewFile")) {
+            getFrom77tjnewFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("trxFile")) {
+        	getTronFile(drawConfig, queue);
+        } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("trxFileHttp")) {
+        	getTronFileByHttp(drawConfig, queue);
+        }  else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("zjXianShangIssue")) {
+        	getZjXianShangIssue(drawConfig, queue);
+        } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("huobiBtcFile")) {
+        	getHuobiBtcFile(drawConfig, queue);
+        } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("bianBtcFile")) {
+        	getBinanceBtcFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("BtcFile")) {
+        	getBtcFFCFile(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("cnd28File")) {
+        	getCnd28File(drawConfig, queue);
+        }else {
         	getFromApiPlus(drawConfig, queue);
         }
     }
     
-    private void getFrom77tjnewApi(DrawConfig drawConfig, Queue<String> queue) {
+  
+
+	private synchronized void getCnd28File(DrawConfig drawConfig, Queue<String> queue) {
+        String url = drawConfig.getSpiderIp();
+        if (StringUtils.isBlank(url)) {
+            logger.error("getCnd28File为空");
+            url = "http://www.lebopc28.cc/Home/getHistory";
+        }
+        String jsonParam = "{\"index\":1}";
+        String postByJson = httpConnectionManager.postByJson(url, jsonParam);
+        logger.info("getCnd28File lottery:{},json:{}", drawConfig.getLotteryCode(), postByJson);
+        
+        if(StringUtils.isBlank(postByJson)) {
+        	return;
+        }
+        JB28ApiAM responseVo = null;
+      
+        try {
+            responseVo = gson.fromJson(postByJson, new TypeToken<JB28ApiAM>() {
+            }.getType());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (responseVo == null || responseVo.getData() == null) {
+            return;
+        }
+        List<Jb28DataItem> list = responseVo.getData();
+        
+        if (CollectionUtils.isEmpty(list)) {
+            return;
+        }
+        int size = list.size() > 5 ? 5 : list.size();
+        for(int i=0;i < size;i++) {
+            Jb28DataItem huoBiItem = list.get(i);
+            String openTimeStr = huoBiItem.getTime_open();
+            String year_format = SimpleYEARParse.format(new Date());
+            openTimeStr = year_format+" "+openTimeStr;
+            Date openTime = null;
+            try {
+				openTime = SimpleParse.parse(openTimeStr);
+			} catch (ParseException e) {
+				e.printStackTrace();
+			}
+	    	  String issue = huoBiItem.getGameid();
+	    	  String openvalue = huoBiItem.getOpenvalue();
+	    	  if(StringUtils.isBlank(openvalue)) {
+	    		  continue;
+	    	  }
+	    	  if (queue.contains(issue)) {
+	    		  continue;
+	    	  }
+	    	  queue.add(issue);
+	    	  LotteryIssueResult issueResult = new LotteryIssueResult();
+	
+	          issueResult.setCode(openvalue);
+	          issueResult.setIssue(issue);
+              issueResult.setTime(openTimeStr);
+              issueResult.setOpentimestamp(String.valueOf(openTime.getTime()));
+              
+              writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+        }
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+	}
+
+	private synchronized void getBtcFFCFile(DrawConfig drawConfig, Queue<String> queue) {
+        String url = "/";
+        String huobiUrl = "/HBBTC60SSC/results/recent.json";
+        String bianUrl = "/BNBTC60SSC/results/recent.json";
+        String spiderIp = drawConfig.getSpiderIp();
+        if (StringUtils.isBlank(spiderIp)) {
+            logger.error("getBtcFFCFile:ip为空");
+            spiderIp="http://127.0.0.1";
+            return;
+        }
+        String hostDomain = StringUtils.trim(spiderIp);
+
+        String huobiRes = get(hostDomain, huobiUrl);
+        logger.info("bendhuobiBtc lottery:{},json:{}", drawConfig.getLotteryCode(), huobiRes);
+        
+        String biAnRes = get(hostDomain, bianUrl);
+        logger.info("bendbianBtc huobiBtc lottery:{},json:{}", drawConfig.getLotteryCode(), biAnRes);
+
+        ArrayList<LotteryIssueResult> huoBiIssues = null;
+        if (!StringUtils.isEmpty(huobiRes)) {
+            try {
+            	huoBiIssues = gson.fromJson(StringUtils.trim(huobiRes), new TypeToken<ArrayList<LotteryIssueResult>>() {
+                }.getType());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        
+        ArrayList<LotteryIssueResult> biAnIssues = null;
+        if (!StringUtils.isEmpty(huobiRes)) {
+            try {
+            	biAnIssues = gson.fromJson(StringUtils.trim(biAnRes), new TypeToken<ArrayList<LotteryIssueResult>>() {
+                }.getType());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        
+        if (huoBiIssues == null || biAnIssues == null) {
+            return;
+        }
+
+        if (CollectionUtils.isEmpty(huoBiIssues) || CollectionUtils.isEmpty(biAnIssues)) {
+            return;
+        }
+        Map<String,LotteryIssueResult> bianMap = new HashMap<>();
+        
+        for(LotteryIssueResult tempIssue: biAnIssues){
+        	String issueNoStr =tempIssue.getIssue();
+        	bianMap.put(issueNoStr, tempIssue);
+        }
+        for (LotteryIssueResult entry : huoBiIssues) {
+        	String issue = entry.getIssue();
+        	if(queue.contains(issue)) {
+            	continue;
+            }
+            Date onlineDateTime = null;
+            try {
+                onlineDateTime = SimpleParse.parse(entry.getTime());
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            if(!bianMap.containsKey(issue)) {
+            	continue;
+            }
+            String huoBiNumber = entry.getCode();
+            LotteryIssueResult bianIssueVo = bianMap.get(issue);
+            String biAnNumber= bianIssueVo.getCode();
+            
+            String [] numArr = new String[5];
+            String[] qiQuNumberArr =huoBiNumber.split(",");
+            String[] heNeiNumberArr =biAnNumber.split(",");
+            
+            for(int i=0;i<qiQuNumberArr.length;i++) {
+            	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
+            	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
+            	
+            	int c = (a+b)%10;
+            	numArr[i]=String.valueOf(c);
+            }
+            String code = StringUtils.join(numArr, ",");
+            logger.info("getBtcFFCFile shengcheng :{} ,{}" ,issue,code);
+            LotteryIssueResult issueResult = new LotteryIssueResult();
+            issueResult.setCode(code);
+            issueResult.setIssue(issue);
+            issueResult.setTime(entry.getTime());
+            issueResult.setHuobiCode(huoBiNumber);
+            issueResult.setBianCode(biAnNumber);
+            String[] splitArr = issue.split("-");
+            int index = 0;
+            if (splitArr.length == 2) {
+                index = Integer.parseInt(splitArr[1]);
+            }
+            issueResult.setIndex(index);
+            issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+            writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+            queue.add(issue);
+        }
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+    }
+
+    
+    private synchronized void getBinanceBtcFile(DrawConfig drawConfig, Queue<String> queue) {
+  	  String spiderIp = drawConfig.getSpiderIp();
+        if (StringUtils.isBlank(spiderIp)) {
+      	  spiderIp="https://api.binance.com";
+            //return;
+        }
+        String url = spiderIp + "/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=10";
+
+        String response = httpConnectionManager.get(url);
+        logger.info("getBinanceBtcFile spider:" + response);
+        if(StringUtils.isBlank(response)) {
+        	return;
+        }
+//        JsonReader.setLenient(true);
+//        Gson gson2 = new Gson();
+        Gson gson = new Gson();
+        JsonReader reader = new JsonReader(new StringReader(response));
+        reader.setLenient(true);
+//        response = response.replace(" ", "");//json字符串
+        List<List<String>>  list = null;
+        if (!StringUtils.isEmpty(response)) {
+            try {
+            	list = gson.fromJson(reader, new TypeToken<List<List<String>>>() {
+                }.getType());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            if (list == null || list.size() < 2) {
+                return;
+            }
+            Collections.reverse(list);
+            for(int i=1;i<list.size();i++) {
+	              List<String> itemList = list.get(i);
+	              
+	          	  Long timeL = Long.parseLong(itemList.get(6));
+	          	  Date tongjiTime = new Date(timeL);
+	          	  String tongJiTimeStr = SimpleParseFen.format(tongjiTime);
+	          	  Date issueTime = new Date(timeL+1L);
+	          	  String issueTimeStr = SimpleParse.format(issueTime);
+	          	  String issue = buidlTencentIssue(issueTimeStr, issueTime);
+	          	  if (queue.contains(issue)) {
+	          		  continue;
+	          	  }
+	          	  BigDecimal volAmount = new BigDecimal(itemList.get(5));
+	          	  volAmount = volAmount.setScale(8,BigDecimal.ROUND_DOWN);
+	          	  String volAmountStr = volAmount.toString();
+	          	  String volAmountStr1 = volAmountStr.substring(0,volAmountStr.indexOf("."));
+	          	  String  volAmountStr2 = volAmountStr.substring(volAmountStr.indexOf(".")+1);
+	          	  String  code = calcBianBtcCode(volAmountStr1,volAmountStr2);
+          	  
+	          	  LotteryIssueResult issueResult = new LotteryIssueResult();
+
+          	  	  issueResult.setCode(code);
+	                issueResult.setIssue(issue);
+	                issueResult.setVal(volAmountStr);
+	                String[] splitArr = issue.split("-");
+	                int index = 0;
+	                if (splitArr.length == 2) {
+	                    index = Integer.parseInt(splitArr[1]);
+	                }
+	                issueResult.setTjTime(tongJiTimeStr+":00");
+	                issueResult.setIndex(index);
+	                issueResult.setTime(issueTimeStr);
+	                issueResult.setVal(volAmountStr);
+	                writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+	                queue.add(issue);
+            }
+            while (queue.size() > 10) {
+                queue.poll();
+            }
+        }
+       
+	}
+    
+    private synchronized void getHuobiBtcFile(DrawConfig drawConfig, Queue<String> queue) {
+    	  String spiderIp = drawConfig.getSpiderIp();
+          if (StringUtils.isBlank(spiderIp)) {
+        	  spiderIp="https://api.huobi.pro";
+              //return;
+          }
+          String url = spiderIp + "/market/history/kline?symbol=btcusdt&period=1min&size=10";
+
+          String response = httpConnectionManager.get(url);
+          logger.info("getHuobiBtcFile spider:" + response);
+
+          HuoBiAM responseVo = null;
+          if (!StringUtils.isEmpty(response)) {
+              try {
+                  responseVo = gson.fromJson(response, new TypeToken<HuoBiAM>() {
+                  }.getType());
+              } catch (Exception e) {
+                  e.printStackTrace();
+              }
+              if (responseVo == null || responseVo.getData() == null) {
+                  return;
+              }
+              List<HuoBiItem> list = responseVo.getData();
+              
+              if (CollectionUtils.isEmpty(list) || list.size()<2) {
+                  return;
+              }
+              for(int i=1;i<list.size();i++) {
+            	  HuoBiItem huoBiItem = list.get(i);
+            	  Long timeL = huoBiItem.getId();
+            	  Date tongjiTime = new Date(timeL*1000L);
+            	  String tongJiTimeStr = SimpleParseFen.format(tongjiTime);
+            	  Date issueTime = new Date(timeL*1000L+(60*1000L));
+            	  String issueTimeStr = SimpleParse.format(issueTime);
+            	  String issue = buidlTencentIssue(issueTimeStr, issueTime);
+            	  if (queue.contains(issue)) {
+            		  continue;
+            	  }
+            	  BigDecimal volAmount = huoBiItem.getAmount();
+            	  volAmount = volAmount.setScale(8,BigDecimal.ROUND_DOWN);
+            	  String volAmountStr = volAmount.toString();
+            	  String volAmountStr1 = volAmountStr.substring(0,volAmountStr.indexOf("."));
+            	  String  volAmountStr2 = volAmountStr.substring(volAmountStr.indexOf(".")+1);
+            	  String  code = calcHuoBiBtcCode(volAmountStr1,volAmountStr2);
+            	  
+            	  LotteryIssueResult issueResult = new LotteryIssueResult();
+
+                  issueResult.setCode(code);
+                  issueResult.setIssue(issue);
+                  issueResult.setVal(volAmountStr);
+                  String[] splitArr = issue.split("-");
+                  int index = 0;
+                  if (splitArr.length == 2) {
+                      index = Integer.parseInt(splitArr[1]);
+                  }
+                  issueResult.setTjTime(tongJiTimeStr+":00");
+                  issueResult.setIndex(index);
+                  issueResult.setTime(issueTimeStr);
+                  issueResult.setVal(volAmountStr);
+                  writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+                  queue.add(issue);
+              }
+              while (queue.size() > 10) {
+                  queue.poll();
+              }
+          }
+         
+	}
+
+	private String calcHuoBiBtcCode(String volAmountStr1,String volAmountStr2) {
+		String [] arr = volAmountStr2.split("");
+		StringBuffer strBuffer = new StringBuffer();
+		
+		int sum = 0;
+		for(int i = 0;i<arr.length;i++) {
+			int tempNum = Integer.parseInt(arr[i]);
+			if(i>=2 && i<=5) {
+				strBuffer.append(",");
+				strBuffer.append(tempNum);
+			}
+			sum +=tempNum;
+		}
+		String [] arr2 = volAmountStr1.split("");
+		for(int i = 0;i<arr2.length;i++) {
+			int tempNum = Integer.parseInt(arr2[i]);
+			sum +=tempNum;
+		}
+		
+		int mol = sum % 10;
+		return String.valueOf(mol)+strBuffer.toString();
+	}
+	
+	private String calcBianBtcCode(String volAmountStr1,String volAmountStr2) {
+		String [] arr = volAmountStr2.split("");
+		StringBuffer strBuffer = new StringBuffer();
+		
+		int sum = 0;
+		for(int i = 0;i<arr.length;i++) {
+			int tempNum = Integer.parseInt(arr[i]);
+			if(i>=1 && i<=4) {
+				strBuffer.append(",");
+				strBuffer.append(tempNum);
+			}
+			sum +=tempNum;
+		}
+		String [] arr2 = volAmountStr1.split("");
+		for(int i = 0;i<arr2.length;i++) {
+			int tempNum = Integer.parseInt(arr2[i]);
+			sum +=tempNum;
+		}
+		
+		int mol = sum % 10;
+		return String.valueOf(mol)+strBuffer.toString();
+	}
+	
+	
+	
+
+	private void getZjXianShangIssue(DrawConfig drawConfig, Queue<String> queue) {
+        try {
+			String spiderIp = drawConfig.getSpiderIp();
+
+			HttpClient httpClient = HttpClients.createDefault();
+			Map<String, String> user = new HashMap<String, String>();
+			user.put("lotteryCode", drawConfig.getToCode());
+			Gson gson = new Gson();
+			String json = gson.toJson(user);
+			String key ="abc123";
+			String paramStr =  EncryptUtil.encryptByKey(key, json);
+			
+			
+			HttpPost httpPost = new HttpPost(spiderIp);
+
+			List<NameValuePair> formparams = new ArrayList<NameValuePair>();
+			String current = System.currentTimeMillis() + "";
+			String sign = EncryptUtil.encrpty2MD5(PCODE + current + current+ key + paramStr);
+
+			formparams.add(new BasicNameValuePair("pcode", PCODE));
+			formparams.add(new BasicNameValuePair("timestamp", current));
+			formparams.add(new BasicNameValuePair("identify", current));
+			formparams.add(new BasicNameValuePair("data", paramStr));
+			formparams.add(new BasicNameValuePair("sign", sign));
+
+			UrlEncodedFormEntity entity = new UrlEncodedFormEntity(formparams);
+
+			httpPost.setEntity(entity);
+
+			HttpResponse response = httpClient.execute(httpPost);
+			HttpEntity reEntity = response.getEntity();
+			String res = EntityUtils.toString(reEntity, "UTF-8");
+			
+			logger.info("getZjXianShangIssue lottery:{},json:{}", drawConfig.getLotteryCode(), res);
+
+			ZjXianShangAM zjXianShangAM = null;
+			if (!StringUtils.isEmpty(res)) {
+			    try {
+			    	zjXianShangAM = gson.fromJson(StringUtils.trim(res), new TypeToken<ZjXianShangAM>() {
+			        }.getType());
+			    } catch (Exception e) {
+			        e.printStackTrace();
+			    }
+			}
+
+			if (zjXianShangAM == null || !"0".equals(zjXianShangAM.getRetCode())||StringUtils.isBlank(zjXianShangAM.getRetData())) {
+			    return;
+			}
+			List<XycIssueItem> issues = null;
+			
+			try {
+				issues = gson.fromJson(zjXianShangAM.getRetData(), new TypeToken<ArrayList<XycIssueItem>>() {
+			    }.getType());
+			} catch (Exception e) {
+			    e.printStackTrace();
+			}
+			
+			
+			if (CollectionUtils.isEmpty(issues)) {
+			    return;
+			}
+    
+			for (XycIssueItem entry : issues) {
+			    Date onlineDateTime = null;
+			    String issue = entry.getQihao();
+			    String timeStamp = entry.getOpen_time();
+			    String openTimeStr = null;
+			    
+				onlineDateTime = new Date(Long.parseLong(timeStamp));
+				openTimeStr = SimpleParse.format(onlineDateTime);
+			    if (!queue.contains(issue)) {
+			        String lotteryNumber = entry.getOpen_no();
+			        String onlineCode = entry.getOpen_no();
+			        notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, lotteryNumber, openTimeStr,
+			                String.valueOf(onlineDateTime.getTime() / 1000), onlineCode);
+			        queue.add(issue);
+			    }
+			}
+			while (queue.size() > 10) {
+			    queue.poll();
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	private synchronized void  getTronFile(DrawConfig drawConfig, Queue<String> queue) {
+		//logger.info("getTronFile nowTime:{} ,needGetBlock:{}" ,nowFenStr,nowBlockNum);
+		String token = drawConfig.getToken();
+		if(StringUtils.isBlank(token)) {
+			//token = "add193f7-51c3-4a3b-9be2-27c4630ba72f";
+			token="2ab2a28a-2b0e-4f99-8811-cc47d614dd8f";
+		}
+		String redisBlockKey = "trx:lottery:fenfen:blockId";
+		try {
+			String lastBlockNumStr = jedisTemplate.get(redisBlockKey);
+			
+			long maxBlockNum = 0;
+			TrxBlockFenFenVo tempTrxBlockFenFenVo = null;
+			Block nowBlock = client.getNowBlock();
+			long nowBlockNum = nowBlock.getBlockHeader().getRawData().getNumber();
+			List<TrxBlockFenFenVo> issueList = new ArrayList<>();
+			logger.info("getTronFile  reids cache blockNum:{},nowBlockNum:{}",lastBlockNumStr,nowBlockNum);
+			if(StringUtils.isBlank(lastBlockNumStr)) {
+				lastBlockNumStr= String.valueOf(nowBlockNum);
+				long tempBlockTime = nowBlock.getBlockHeader().getRawData().getTimestamp();
+				maxBlockNum = nowBlockNum;
+				Long secondTime = tempBlockTime/1000L;
+				Long mod = secondTime%60L;
+				logger.info("getTronFile  getNowBlock:{}, blockTime:{}",nowBlockNum,tempBlockTime);
+				
+				if(mod.intValue() == 0) {//整点分钟
+					tempTrxBlockFenFenVo = new TrxBlockFenFenVo();
+					tempTrxBlockFenFenVo.setId(nowBlockNum);
+					tempTrxBlockFenFenVo.setTime(tempBlockTime);
+					tempTrxBlockFenFenVo.setJiaoYiCount(nowBlock.getTransactionsCount());
+					issueList.add(tempTrxBlockFenFenVo);
+				}else {
+					jedisTemplate.setex(redisBlockKey, String.valueOf(nowBlockNum), 18000);
+					return;//不是整点退回
+				}
+			}else {
+				maxBlockNum = Long.parseLong(lastBlockNumStr);
+			}
+			if(CollectionUtils.isEmpty(issueList)) {
+				BlockListExtention blockByLimitNext =null;
+				long addNum = maxBlockNum+1L;
+				
+				if((addNum+21L)>nowBlockNum) {
+					addNum=nowBlockNum;
+				}else {
+					addNum=addNum+20L;
+				}
+				try {
+					logger.info("getTronFile  getBlockList lunxun,statBlockNum:{} addNum:{},nowBlockNum:{}",(maxBlockNum+1L),addNum,nowBlockNum);
+					blockByLimitNext = client.getBlockByLimitNext(maxBlockNum+1L, addNum);
+				} catch (Exception e) {
+					logger.error(e.getMessage(),e);
+					throw e;
+				}
+				if(blockByLimitNext!=null) {
+					List<BlockExtention> blockList = blockByLimitNext.getBlockList();
+					if(CollectionUtils.isEmpty(blockList)) {
+						return;
+					}
+					int count = 0;
+					for(BlockExtention blockExtention : blockList) {
+						long tempBlockNum = blockExtention.getBlockHeader().getRawData().getNumber();
+						long tempBlockTime = blockExtention.getBlockHeader().getRawData().getTimestamp();
+						if(tempBlockNum > maxBlockNum) {
+							maxBlockNum = tempBlockNum;
+						}
+						Date issueTime = new Date(tempBlockTime);
+						String issueTimeStr = SimpleParse.format(issueTime);
+						String issueNo = buidlTencentIssue(issueTimeStr, issueTime);
+						
+						if(queue.contains(issueNo)) {//已经获取过 就不用获取
+							jedisTemplate.setex(redisBlockKey, String.valueOf(maxBlockNum), 18000);//先设置最大的
+			            	continue;
+			            }
+						Long secondTime = tempBlockTime/1000L;
+						Long mod = secondTime%60L;
+						
+						tempTrxBlockFenFenVo = new TrxBlockFenFenVo();
+						tempTrxBlockFenFenVo.setId(tempBlockNum);
+						tempTrxBlockFenFenVo.setTime(tempBlockTime);
+						tempTrxBlockFenFenVo.setJiaoYiCount(blockExtention.getTransactionsCount());
+						issueList.add(tempTrxBlockFenFenVo);
+						logger.info("getTronFile  getBlockList diedai:{},blockId:{} blockTime:{}",count,tempBlockNum,tempBlockTime);
+						
+						logger.info("getTronFile pipeiBlock  time:{} qihao:{},blockId:{} blockTime:{}",issueTimeStr,issueNo,tempTrxBlockFenFenVo.getId(),tempTrxBlockFenFenVo.getTime());
+						
+						String jsonParm = "{\"num\":"+tempTrxBlockFenFenVo.getId()+"}";
+						String url = "https://api.trongrid.io/wallet/getblockbynum";
+						String postTrxStr = httpConnectionManager.postTrx(url, jsonParm, "04ec922f-bdd2-47e1-8f3f-6e32937a4b61");
+						TrxHttpBlockAM trxHttpBlockAM = null;
+						
+						if (StringUtils.isNotBlank(postTrxStr)) {
+				            try {
+				            	trxHttpBlockAM = gson.fromJson(postTrxStr, new TypeToken<TrxHttpBlockAM>() {
+				                }.getType());
+				            } catch (Exception e) {
+				            }
+				        }
+						if(trxHttpBlockAM == null) {
+							logger.info("getTronFile getBlockHash NULL  time:{} qihao:{},blockId:{} blockTime:{}",issueTimeStr,issueNo,tempTrxBlockFenFenVo.getId(),tempTrxBlockFenFenVo.getTime());
+							return;
+						}
+						logger.info("getTronFile getBlockHash  time:{} qihao:{},blockId:{} blockTime:{},hash:{}",issueTimeStr,issueNo,tempTrxBlockFenFenVo.getId(),tempTrxBlockFenFenVo.getTime(),trxHttpBlockAM.getBlockID());
+						if(StringUtils.isBlank(trxHttpBlockAM.getBlockID())) {
+							return;
+						}
+						String needSha256Str = trxHttpBlockAM.getBlockID()+tempTrxBlockFenFenVo.getJiaoYiCount();
+						String sha256StrJava = SHA256Util.getSHA256StrJava(needSha256Str);
+						Gson gson = new Gson();
+						
+				        LotteryIssueResult issueResult = new LotteryIssueResult();
+				        issueResult.setIssue(issueNo);
+				        issueResult.setTime(issueTimeStr);
+				        issueResult.setOpentimestamp(String.valueOf(tempTrxBlockFenFenVo.getTime()));
+				        issueResult.setBlockHash(trxHttpBlockAM.getBlockID());
+				        issueResult.setTransactionsCount(String.valueOf(tempTrxBlockFenFenVo.getJiaoYiCount()));
+				        issueResult.setBlockId(String.valueOf(tempTrxBlockFenFenVo.getId()));
+				        issueResult.setShaHash(sha256StrJava);
+				        
+				        
+				        String code2 = SHA256Util.getNumFromSha256Str2(sha256StrJava);
+						
+						LotteryIssueResult issueResult2 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+						issueResult2.setCode(code2);
+						
+						LotteryIssueResult shaHao = tronDrawService.shaHao(issueResult2, "");
+						DrawConfig drawConfig2 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+						drawConfig2.setFilePath("/data/openResult/TRX60SSC2");
+					    writeFilePool.submit(new LotteryResultSaveTask(drawConfig2, shaHao));
+					   
+				        queue.add(issueNo);
+				        jedisTemplate.setex(redisBlockKey, String.valueOf(maxBlockNum), 18000);//先设置最大的
+						count++;
+						
+						while (queue.size() > 60) {
+				            queue.poll();
+				        }
+					}
+				}
+			}
+		} catch (IllegalException e) {
+			logger.error(e.getMessage(),e);
+		}
+	}
+    
+    
+    private synchronized void  getTronFile33(DrawConfig drawConfig, Queue<String> queue) {
+		//logger.info("getTronFile nowTime:{} ,needGetBlock:{}" ,nowFenStr,nowBlockNum);
+		String token = drawConfig.getToken();
+		if(StringUtils.isBlank(token)) {
+			//token = "add193f7-51c3-4a3b-9be2-27c4630ba72f";
+			token="2ab2a28a-2b0e-4f99-8811-cc47d614dd8f";
+		}
+		String redisBlockKey = "trx:lottery:fenfen:blockId";
+		try {
+			ApiWrapper client = ApiWrapper.ofMainnet("d2f1f7beb8da8c8a4f94a9e12800778f86973468dea098c55032c55a06627ec9", token);
+			String lastBlockNumStr = jedisTemplate.get(redisBlockKey);
+			
+			long maxBlockNum = 0;
+			TrxBlockFenFenVo tempTrxBlockFenFenVo = null;
+			Block nowBlock = client.getNowBlock();
+			long nowBlockNum = nowBlock.getBlockHeader().getRawData().getNumber();
+			List<TrxBlockFenFenVo> issueList = new ArrayList<>();
+			logger.info("getTronFile  reids cache blockNum:{},nowBlockNum:{}",lastBlockNumStr,nowBlockNum);
+			if(StringUtils.isBlank(lastBlockNumStr)) {
+				lastBlockNumStr= String.valueOf(nowBlockNum);
+				long tempBlockTime = nowBlock.getBlockHeader().getRawData().getTimestamp();
+				maxBlockNum = nowBlockNum;
+				Long secondTime = tempBlockTime/1000L;
+				Long mod = secondTime%60L;
+				logger.info("getTronFile  getNowBlock:{}, blockTime:{}",nowBlockNum,tempBlockTime);
+				
+				if(mod.intValue() == 0) {//整点分钟
+					tempTrxBlockFenFenVo = new TrxBlockFenFenVo();
+					tempTrxBlockFenFenVo.setId(nowBlockNum);
+					tempTrxBlockFenFenVo.setTime(tempBlockTime);
+					tempTrxBlockFenFenVo.setJiaoYiCount(nowBlock.getTransactionsCount());
+					issueList.add(tempTrxBlockFenFenVo);
+				}else {
+					jedisTemplate.setex(redisBlockKey, String.valueOf(nowBlockNum), 18000);
+					return;//不是整点退回
+				}
+			}else {
+				maxBlockNum = Long.parseLong(lastBlockNumStr);
+			}
+			if(CollectionUtils.isEmpty(issueList)) {
+				BlockListExtention blockByLimitNext =null;
+				long addNum = maxBlockNum+1L;
+				
+				if((addNum+51L)>nowBlockNum) {
+					addNum=nowBlockNum;
+				}else {
+					addNum=addNum+50L;
+				}
+				try {
+					logger.info("getTronFile  getBlockList lunxun,statBlockNum:{} addNum:{},nowBlockNum:{}",(maxBlockNum+1L),addNum,nowBlockNum);
+					blockByLimitNext = client.getBlockByLimitNext(maxBlockNum+1L, addNum);
+				} catch (Exception e) {
+					logger.error(e.getMessage(),e);
+					throw e;
+				}
+				if(blockByLimitNext!=null) {
+					List<BlockExtention> blockList = blockByLimitNext.getBlockList();
+					if(CollectionUtils.isEmpty(blockList)) {
+						return;
+					}
+					int count = 0;
+					for(BlockExtention blockExtention : blockList) {
+						long tempBlockNum = blockExtention.getBlockHeader().getRawData().getNumber();
+						long tempBlockTime = blockExtention.getBlockHeader().getRawData().getTimestamp();
+						if(tempBlockNum > maxBlockNum) {
+							maxBlockNum = tempBlockNum;
+						}
+						Date issueTime = new Date(tempBlockTime);
+						String issueTimeStr = SimpleParse.format(issueTime);
+						String issueNo = buidlTencentIssue(issueTimeStr, issueTime);
+						
+						if(queue.contains(issueNo)) {//已经获取过 就不用获取
+			            	continue;
+			            }
+						Long secondTime = tempBlockTime/1000L;
+						Long mod = secondTime%60L;
+						
+//						if(mod.intValue() == 0) {//整点分钟
+						tempTrxBlockFenFenVo = new TrxBlockFenFenVo();
+						tempTrxBlockFenFenVo.setId(tempBlockNum);
+						tempTrxBlockFenFenVo.setTime(tempBlockTime);
+						tempTrxBlockFenFenVo.setJiaoYiCount(blockExtention.getTransactionsCount());
+						issueList.add(tempTrxBlockFenFenVo);
+//						}
+						queue.add(issueNo);
+						logger.info("getTronFile  getBlockList diedai:{},blockId:{} blockTime:{}",count,tempBlockNum,tempBlockTime);
+						count++;
+						  
+						while (queue.size() > 60) {
+				            queue.poll();
+				        }
+					}
+				}
+			}
+			if(CollectionUtils.isEmpty(issueList)) {
+				jedisTemplate.setex(redisBlockKey, String.valueOf(maxBlockNum), 18000);//先设置最大的
+				return;
+			}
+			//计算开奖号码
+			for(TrxBlockFenFenVo issueVo: issueList) {
+				Date issueTime = new Date(issueVo.getTime());
+				String issueTimeStr = SimpleParse.format(issueTime);
+				String issueNo = buidlTencentIssue(issueTimeStr, issueTime);
+				if(queue.contains(issueNo)) {//已经获取过 就不用获取
+	            	continue;
+	            }
+
+				
+				logger.info("getTronFile pipeiBlock  time:{} qihao:{},blockId:{} blockTime:{}",issueTimeStr,issueNo,issueVo.getId(),issueVo.getTime());
+				
+				String jsonParm = "{\"num\":"+issueVo.getId()+"}";
+				String url = "https://api.trongrid.io/wallet/getblockbynum";
+				String postTrxStr = httpConnectionManager.postTrx(url, jsonParm, "04ec922f-bdd2-47e1-8f3f-6e32937a4b61");
+				TrxHttpBlockAM trxHttpBlockAM = null;
+				
+				if (StringUtils.isNotBlank(postTrxStr)) {
+		            try {
+		            	trxHttpBlockAM = gson.fromJson(postTrxStr, new TypeToken<TrxHttpBlockAM>() {
+		                }.getType());
+		            } catch (Exception e) {
+		            }
+		        }
+				if(trxHttpBlockAM == null) {
+					logger.info("getTronFile getBlockHash NULL  time:{} qihao:{},blockId:{} blockTime:{}",issueTimeStr,issueNo,issueVo.getId(),issueVo.getTime());
+					return;
+				}
+				logger.info("getTronFile getBlockHash  time:{} qihao:{},blockId:{} blockTime:{},hash:{}",issueTimeStr,issueNo,issueVo.getId(),issueVo.getTime(),trxHttpBlockAM.getBlockID());
+				if(StringUtils.isBlank(trxHttpBlockAM.getBlockID())) {
+					return;
+				}
+				String needSha256Str = trxHttpBlockAM.getBlockID()+issueVo.getJiaoYiCount();
+				String sha256StrJava = SHA256Util.getSHA256StrJava(needSha256Str);
+				Gson gson = new Gson();
+				
+		        LotteryIssueResult issueResult = new LotteryIssueResult();
+		        issueResult.setIssue(issueNo);
+		        issueResult.setTime(issueTimeStr);
+		        issueResult.setOpentimestamp(String.valueOf(issueVo.getTime()));
+		        issueResult.setBlockHash(trxHttpBlockAM.getBlockID());
+		        issueResult.setTransactionsCount(String.valueOf(issueVo.getJiaoYiCount()));
+		        issueResult.setBlockId(String.valueOf(issueVo.getId()));
+		        
+		        
+		        String code = SHA256Util.getNumFromSha256Str(sha256StrJava);
+		        String code2 = SHA256Util.getNumFromSha256Str2(sha256StrJava);
+		        issueResult.setCode(code);
+		        issueResult.setShaHash(sha256StrJava);
+		        //writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+		        
+				
+				LotteryIssueResult issueResult2 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+				issueResult2.setCode(code2);
+				DrawConfig drawConfig2 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+				drawConfig2.setFilePath("/data/openResult/TRX60SSC2");
+			    writeFilePool.submit(new LotteryResultSaveTask(drawConfig2, issueResult2));
+			    
+//			    String needSha256Str3 = trxHttpBlockAM.getBlockID();
+//				String sha256StrJava3 = SHA256Util.getSHA256StrJava(needSha256Str3);
+//				String code3 = SHA256Util.getNumFromSha256Str(sha256StrJava3);
+//				String code4 = SHA256Util.getNumFromSha256Str2(sha256StrJava3);
+//				
+//		        LotteryIssueResult issueResult3 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+//		        issueResult3.setCode(code3);
+//		        issueResult3.setShaHash(sha256StrJava3);
+//				DrawConfig drawConfig3 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+//				drawConfig3.setFilePath("/data/openResult/TRX60SSC3");
+//		        writeFilePool.submit(new LotteryResultSaveTask(drawConfig3, issueResult3));
+//		        
+//		        
+//		        LotteryIssueResult issueResult4 =gson.fromJson(gson.toJson(issueResult3), LotteryIssueResult.class);
+//		        issueResult4.setCode(code4);
+//		        issueResult4.setShaHash(sha256StrJava3);
+//				DrawConfig drawConfig4 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+//				drawConfig4.setFilePath("/data/openResult/TRX60SSC4");
+//			   	writeFilePool.submit(new LotteryResultSaveTask(drawConfig4, issueResult4));
+				
+		        queue.add(issueNo);
+		        jedisTemplate.setex(redisBlockKey, String.valueOf(maxBlockNum), 18000);//先设置最大的
+		        
+				while (queue.size() > 10) {
+		            queue.poll();
+		        }
+			}
+			
+			
+		} catch (IllegalException e) {
+			logger.error(e.getMessage(),e);
+		}
+	}
+    
+    private synchronized void  getTronFileByHttp(DrawConfig drawConfig, Queue<String> queue) {
+		//logger.info("getTronFile nowTime:{} ,needGetBlock:{}" ,nowFenStr,nowBlockNum);
+		String token = drawConfig.getToken();
+		if(StringUtils.isBlank(token)) {
+			//token = "add193f7-51c3-4a3b-9be2-27c4630ba72f";
+			token="2ab2a28a-2b0e-4f99-8811-cc47d614dd8f";
+		}
+		String httpToken = "04ec922f-bdd2-47e1-8f3f-6e32937a4b61";
+		String redisBlockKey = "trx:lottery:fenfen:blockId";
+		String url = null;
+		//String jsonParm = "{\"num\":"+issueVo.getId()+"}";
+		String jsonParm = "";
+		try {
+			url = "https://api.trongrid.io/wallet/getnowblock";
+			String nowBlockStr = httpConnectionManager.postTrx(url, jsonParm, httpToken);
+			System.out.println(nowBlockStr);
+			
+			
+			if(StringUtils.isBlank(nowBlockStr)) {
+				logger.info("getTronFile  nowBlockStr is null ");
+			}
+			TrxBlock nowTrxBlock = null;
+			
+			if (StringUtils.isNotBlank(nowBlockStr)) {
+	            try {
+	            	nowTrxBlock = gson.fromJson(nowBlockStr, new TypeToken<TrxBlock>() {
+	                }.getType());
+	            } catch (Exception e) {
+	            }
+	        }
+			if(nowTrxBlock == null) {
+				logger.info("getTronFile nowBlockStr convert nowTrxBlock NULL");
+				return;
+			}
+			jsonParm = "{\"num\":"+nowTrxBlock.getBlock_header().getRaw_data().getNumber()+"}";
+			url = "https://api.trongrid.io/wallet/getblockbynum";
+			String dfddfdf = httpConnectionManager.postTrx(url, jsonParm, "04ec922f-bdd2-47e1-8f3f-6e32937a4b61");
+			
+			//ApiWrapper client = ApiWrapper.ofMainnet("d2f1f7beb8da8c8a4f94a9e12800778f86973468dea098c55032c55a06627ec9", token);
+			System.out.println(dfddfdf);
+			String lastBlockNumStr = jedisTemplate.get(redisBlockKey);
+			
+			long maxBlockNum = 0;
+			TrxBlockFenFenVo tempTrxBlockFenFenVo = null;
+			long nowBlockNum = nowTrxBlock.getBlock_header().getRaw_data().getNumber();
+			List<TrxBlockFenFenVo> issueList = new ArrayList<>();
+			logger.info("getTronFile  reids cache blockNum:{},nowBlockNum:{}",lastBlockNumStr,nowBlockNum);
+			if(StringUtils.isBlank(lastBlockNumStr)) {
+				lastBlockNumStr= String.valueOf(nowBlockNum);
+				long tempBlockTime = nowTrxBlock.getBlock_header().getRaw_data().getTimestamp();
+				maxBlockNum = nowBlockNum;
+				Long secondTime = tempBlockTime/1000L;
+				Long mod = secondTime%60L;
+				logger.info("getTronFile  getNowBlock:{}, blockTime:{}",nowBlockNum,tempBlockTime);
+				
+				if(mod.intValue() == 0) {//整点分钟
+					tempTrxBlockFenFenVo = new TrxBlockFenFenVo();
+					tempTrxBlockFenFenVo.setId(nowBlockNum);
+					tempTrxBlockFenFenVo.setTime(tempBlockTime);
+					//tempTrxBlockFenFenVo.setJiaoYiCount(nowBlock.getTransactionsCount());
+					issueList.add(tempTrxBlockFenFenVo);
+				}else {
+					jedisTemplate.setex(redisBlockKey, String.valueOf(nowBlockNum), 18000);
+					return;//不是整点退回
+				}
+			}else {
+				maxBlockNum = Long.parseLong(lastBlockNumStr);
+			}
+			if(CollectionUtils.isEmpty(issueList)) {
+				BlockListExtention blockByLimitNext =null;
+				long addNum = maxBlockNum+1L;
+				
+				if((addNum+51L)>nowBlockNum) {
+					addNum=nowBlockNum;
+				}else {
+					addNum=addNum+50L;
+				}
+				try {
+					logger.info("getTronFile  getBlockList lunxun,statBlockNum:{} addNum:{},nowBlockNum:{}",(maxBlockNum+1L),addNum,nowBlockNum);
+					//blockByLimitNext = client.getBlockByLimitNext(maxBlockNum+1L, addNum);
+//					blockByLimitNext=new ;
+				} catch (Exception e) {
+					logger.error(e.getMessage(),e);
+					throw e;
+				}
+				if(blockByLimitNext!=null) {
+					List<BlockExtention> blockList = blockByLimitNext.getBlockList();
+					if(CollectionUtils.isEmpty(blockList)) {
+						return;
+					}
+					int count = 0;
+					for(BlockExtention blockExtention : blockList) {
+						long tempBlockNum = blockExtention.getBlockHeader().getRawData().getNumber();
+						long tempBlockTime = blockExtention.getBlockHeader().getRawData().getTimestamp();
+						if(tempBlockNum > maxBlockNum) {
+							maxBlockNum = tempBlockNum;
+						}
+						Long secondTime = tempBlockTime/1000L;
+						Long mod = secondTime%60L;
+						
+						if(mod.intValue() == 0) {//整点分钟
+							tempTrxBlockFenFenVo = new TrxBlockFenFenVo();
+							tempTrxBlockFenFenVo.setId(tempBlockNum);
+							tempTrxBlockFenFenVo.setTime(tempBlockTime);
+							tempTrxBlockFenFenVo.setJiaoYiCount(blockExtention.getTransactionsCount());
+							issueList.add(tempTrxBlockFenFenVo);
+						}
+						logger.info("getTronFile  getBlockList diedai:{},blockId:{} blockTime:{}",count,tempBlockNum,tempBlockTime);
+						count++;
+					}
+				}
+			}
+			if(CollectionUtils.isEmpty(issueList)) {
+				jedisTemplate.setex(redisBlockKey, String.valueOf(maxBlockNum), 18000);//先设置最大的
+				return;
+			}
+			//计算开奖号码
+			for(TrxBlockFenFenVo issueVo: issueList) {
+				if(queue.contains(String.valueOf(issueVo.getId()))) {//已经获取过 就不用获取
+	            	continue;
+	            }
+
+				Date issueTime = new Date(issueVo.getTime());
+				String issueTimeStr = SimpleParse.format(issueTime);
+				String issueNo = buidlTencentIssue(issueTimeStr, issueTime);
+				
+				logger.info("getTronFile pipeiBlock  time:{} qihao:{},blockId:{} blockTime:{}",issueTimeStr,issueNo,issueVo.getId(),issueVo.getTime());
+				
+				jsonParm = "{\"num\":"+issueVo.getId()+"}";
+				url = "https://api.trongrid.io/wallet/getblockbynum";
+				String postTrxStr = httpConnectionManager.postTrx(url, jsonParm, "04ec922f-bdd2-47e1-8f3f-6e32937a4b61");
+				TrxHttpBlockAM trxHttpBlockAM = null;
+				
+				if (StringUtils.isNotBlank(postTrxStr)) {
+		            try {
+		            	trxHttpBlockAM = gson.fromJson(postTrxStr, new TypeToken<TrxHttpBlockAM>() {
+		                }.getType());
+		            } catch (Exception e) {
+		            }
+		        }
+				if(trxHttpBlockAM == null) {
+					logger.info("getTronFile getBlockHash NULL  time:{} qihao:{},blockId:{} blockTime:{}",issueTimeStr,issueNo,issueVo.getId(),issueVo.getTime());
+					return;
+				}
+				logger.info("getTronFile getBlockHash  time:{} qihao:{},blockId:{} blockTime:{},hash:{}",issueTimeStr,issueNo,issueVo.getId(),issueVo.getTime(),trxHttpBlockAM.getBlockID());
+				if(StringUtils.isBlank(trxHttpBlockAM.getBlockID())) {
+					return;
+				}
+				String needSha256Str = trxHttpBlockAM.getBlockID()+issueVo.getJiaoYiCount();
+				String sha256StrJava = SHA256Util.getSHA256StrJava(needSha256Str);
+				Gson gson = new Gson();
+				
+		        LotteryIssueResult issueResult = new LotteryIssueResult();
+		        issueResult.setIssue(issueNo);
+		        issueResult.setTime(issueTimeStr);
+		        issueResult.setOpentimestamp(String.valueOf(issueVo.getTime()));
+		        issueResult.setBlockHash(trxHttpBlockAM.getBlockID());
+		        issueResult.setTransactionsCount(String.valueOf(issueVo.getJiaoYiCount()));
+		        issueResult.setBlockId(String.valueOf(issueVo.getId()));
+		        
+		        
+		        String code = SHA256Util.getNumFromSha256Str(sha256StrJava);
+		        String code2 = SHA256Util.getNumFromSha256Str2(sha256StrJava);
+		        issueResult.setCode(code);
+		        issueResult.setShaHash(sha256StrJava);
+		        //writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+		        
+				
+				LotteryIssueResult issueResult2 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+				issueResult2.setCode(code2);
+				DrawConfig drawConfig2 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+				drawConfig2.setFilePath("/data/openResult/TRX60SSC2");
+			    writeFilePool.submit(new LotteryResultSaveTask(drawConfig2, issueResult2));
+			    
+//			    String needSha256Str3 = trxHttpBlockAM.getBlockID();
+//				String sha256StrJava3 = SHA256Util.getSHA256StrJava(needSha256Str3);
+//				String code3 = SHA256Util.getNumFromSha256Str(sha256StrJava3);
+//				String code4 = SHA256Util.getNumFromSha256Str2(sha256StrJava3);
+//				
+//		        LotteryIssueResult issueResult3 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+//		        issueResult3.setCode(code3);
+//		        issueResult3.setShaHash(sha256StrJava3);
+//				DrawConfig drawConfig3 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+//				drawConfig3.setFilePath("/data/openResult/TRX60SSC3");
+//		        writeFilePool.submit(new LotteryResultSaveTask(drawConfig3, issueResult3));
+//		        
+//		        
+//		        LotteryIssueResult issueResult4 =gson.fromJson(gson.toJson(issueResult3), LotteryIssueResult.class);
+//		        issueResult4.setCode(code4);
+//		        issueResult4.setShaHash(sha256StrJava3);
+//				DrawConfig drawConfig4 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+//				drawConfig4.setFilePath("/data/openResult/TRX60SSC4");
+//			   	writeFilePool.submit(new LotteryResultSaveTask(drawConfig4, issueResult4));
+				
+		        queue.add(String.valueOf(issueVo.getId()));
+		        jedisTemplate.setex(redisBlockKey, String.valueOf(maxBlockNum), 18000);//先设置最大的
+		        
+				while (queue.size() > 10) {
+		            queue.poll();
+		        }
+			}
+			
+			
+		} catch (Exception e) {
+			logger.error(e.getMessage(),e);
+		}
+	}
+
+	private void getFrom77tjnewApi(DrawConfig drawConfig, Queue<String> queue) {
     	String spiderIp = drawConfig.getSpiderIp();
 		
 		if(StringUtils.isBlank(spiderIp)) {
@@ -329,7 +1374,7 @@ public class ApiPlusService {
                 e.printStackTrace();
             }
             notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, QiquNumber,
-            		onlineTime, timestamp, null);
+            		onlineTime, timestamp, tencentOnline.getOnlinenumber());
             queue.add(entry.getOnlinetime());
         }
 
@@ -337,6 +1382,66 @@ public class ApiPlusService {
             queue.poll();
         }
 	}
+	
+	  private void getFrom77tjnewFile(DrawConfig drawConfig, Queue<String> queue) {
+		  String spiderIp = drawConfig.getSpiderIp();
+			
+			if(StringUtils.isBlank(spiderIp)) {
+				spiderIp="https://77tj001.org/api/tencent/onlineim";
+			}
+			
+	    	String qiQuRes = httpConnectionManager.get(spiderIp);
+	    	logger.info("QIQU60SSC ,url:{} ,getFrom77tjnewFile spider:{}" ,spiderIp,qiQuRes);
+	    	
+	        ArrayList<TencentOnline> qiQuIssues = null;
+	        if (!StringUtils.isEmpty(qiQuRes)) {
+	            try {
+	            	qiQuIssues = gson.fromJson(qiQuRes, new TypeToken<ArrayList<TencentOnline>>() {
+	                }.getType());
+	            } catch (Exception e) {
+	            }
+	        }
+	        if (qiQuIssues == null) {
+	            return;
+	        }
+	        if (CollectionUtils.isEmpty(qiQuIssues)) {
+	            return;
+	        }
+
+	        for (TencentOnline entry : qiQuIssues) {
+	        	if(queue.contains(entry.getOnlinetime())) {
+	            	continue;
+	            }
+	            Date onlineDateTime = null;
+	            try {
+	                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+	            } catch (ParseException e) {
+	                e.printStackTrace();
+	            }
+	            String issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+	            
+	            TencentOnline tencentOnline = entry;
+//	            String onlineTime = tencentOnline.getOnlinetime();
+//	            String timestamp = "";
+//	            try {
+//	                timestamp = SimpleParse.parse(onlineTime).getTime() / 1000 + "";
+//	            } catch (ParseException e) {
+//	                e.printStackTrace();
+//	            }
+	            LotteryIssueResult issueResult = new LotteryIssueResult();
+                issueResult.setCode(tencentOnline.getOnlinenumber());
+                issueResult.setIssue(issue);
+                issueResult.setTime(entry.getOnlinetime());
+                issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+                writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+	            queue.add(entry.getOnlinetime());
+	        }
+
+	        while (queue.size() > 10) {
+	            queue.poll();
+	        }
+			
+		}
 
 	private void get168KjApi(DrawConfig drawConfig, Queue<String> queue) {
 		String url="/pks/getLotteryPksInfo.do?lotCode="+drawConfig.getToCode();
@@ -404,6 +1509,79 @@ public class ApiPlusService {
 	
 	private void get168KjApiFile(DrawConfig drawConfig, Queue<String> queue) {
 		String url="/pks/getLotteryPksInfo.do?lotCode="+drawConfig.getToCode();
+		String spiderIp = drawConfig.getSpiderIp();
+		
+		if(StringUtils.isBlank(spiderIp)) {
+			spiderIp="https://api.api68.com";
+		}
+		if(drawConfig.getLotteryCode().contains("LHECXJW")) {
+			url=spiderIp+"/smallSix/findSmallSixInfo.do";
+	    }else {
+	    	url=spiderIp+url;
+	    }
+		
+		String response = httpConnectionManager.get(url);
+	    logger.info("{} ,url:{} ,get168KjApiFile spider:{}" ,drawConfig.getToCode(),url,response);
+	    
+	    YiLiuBaDataAM yiLiuBaDataAM= null;
+	    
+	    if(StringUtils.isBlank(response)){
+	    	return;
+	    }
+	    try {
+	    	yiLiuBaDataAM = gson.fromJson(response, new TypeToken<YiLiuBaDataAM>() {
+            }.getType());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (yiLiuBaDataAM == null || yiLiuBaDataAM.getResult()==null) {
+            return;
+        }
+        YiLiuBaDataVo yiLiuBaDataVo=yiLiuBaDataAM.getResult();
+        
+        if (yiLiuBaDataVo == null || yiLiuBaDataVo.getData()==null) {
+            return;
+        }
+        NewKjapiFreeItem newKjapiFreeItem=yiLiuBaDataVo.getData();
+        if (newKjapiFreeItem == null ) {
+            return;
+        }
+        String issueNoStr =newKjapiFreeItem.getPreDrawIssue();
+        if (queue.contains(issueNoStr)) {
+	    	return;
+	    }
+        Date onlineDateTime = null;
+        String onlineStr =newKjapiFreeItem.getPreDrawTime();
+        try {
+            onlineDateTime = SimpleParse.parse(String.valueOf(onlineStr));
+        } catch (ParseException e) {
+            logger.error(e.getMessage(), e);
+        }
+        String code=newKjapiFreeItem.getPreDrawCode();
+        if(drawConfig.getLotteryCode().contains("LHECXJW")) {
+        	code = formatLow10OpenCode(code);
+        	logger.info("get168KjApiFile LHECXJW beforeCode:{}, afterCode:{}",newKjapiFreeItem.getPreDrawCode(),code);
+        }
+        
+        LotteryIssueResult issueResult = new LotteryIssueResult();
+        issueResult.setCode(code);
+        issueResult.setIssue(issueNoStr);
+        issueResult.setTime(onlineStr);
+        issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+        writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+        queue.add(issueNoStr);
+        while (queue.size() > QUEUE_MAX_SIZE) {
+            queue.poll();
+        }
+	}
+	
+	private void get168KjApiFile2(DrawConfig drawConfig, Queue<String> queue) {
+		String url="/QuanGuoCai/getLotteryInfo.do?lotCode="+drawConfig.getToCode();
+		
+		if(drawConfig.getToCode().equals("10041") || drawConfig.getToCode().equals("10041")) {
+			url="/QuanGuoCai/getLotteryInfo1.do?lotCode="+drawConfig.getToCode();
+		}
+		
 		String spiderIp = drawConfig.getSpiderIp();
 		
 		if(StringUtils.isBlank(spiderIp)) {
@@ -571,6 +1749,233 @@ public class ApiPlusService {
 	}
     
     private void getHeneiQiquFile(DrawConfig drawConfig, Queue<String> queue) {
+    	String url="http://3a.flbgf.com/HENEI60SSC/results/recent.json";
+    	String heNeiRes = httpConnectionManager.get(url);
+    	
+    	logger.info("HEINEI60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,heNeiRes);
+    	
+    	url="https://77tj001.org/api/tencent/onlineim";
+    	String qiQuRes = httpConnectionManager.get(url);
+    	logger.info("QIQU60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,qiQuRes);
+    	
+        ArrayList<TencentOnline> qiQuIssues = null;
+        if (!StringUtils.isEmpty(qiQuRes)) {
+            try {
+            	qiQuIssues = gson.fromJson(qiQuRes, new TypeToken<ArrayList<TencentOnline>>() {
+                }.getType());
+            } catch (Exception e) {
+            }
+        }
+        if (qiQuIssues == null) {
+            return;
+        }
+        if (CollectionUtils.isEmpty(qiQuIssues)) {
+            return;
+        }
+        
+        List<LotteryIssueResult> heNeiList = null;
+	    
+	    if(StringUtils.isBlank(heNeiRes)){
+	    	return;
+	    }
+	    try {
+	    	heNeiList = gson.fromJson(heNeiRes, new TypeToken<ArrayList<LotteryIssueResult>>() {
+            }.getType());
+	        } catch (Exception e) {
+	            e.printStackTrace();
+	        }
+	    if (CollectionUtils.isEmpty(heNeiList)) {
+	        return;
+	    }
+        Map<String,LotteryIssueResult> heNeiMap = new HashMap<>();
+        for(LotteryIssueResult heNeiGwItem: heNeiList){
+        	String issueNoStr = heNeiGwItem.getIssue();
+        	heNeiMap.put(issueNoStr, heNeiGwItem);
+        }
+
+        for (TencentOnline entry : qiQuIssues) {
+        	if(queue.contains(entry.getOnlinetime())) {
+            	continue;
+            }
+            Date onlineDateTime = null;
+            try {
+                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            String issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+            
+            if(!heNeiMap.containsKey(issue)) {
+            	continue;
+            }
+            TencentOnline tencentOnline = entry;
+            String QiquNumber = buildTencentNumber(tencentOnline.getOnlinenumber());
+            LotteryIssueResult fengHuangItemVo = heNeiMap.get(issue);
+           // String heiNeiNumber= formatOpenCode(fengHuangItemVo.getCode());
+            String heiNeiNumber= fengHuangItemVo.getCode();
+            
+            String [] numArr = new String[5];
+            String[] qiQuNumberArr =QiquNumber.split(",");
+            String[] heNeiNumberArr =heiNeiNumber.split(",");
+            String [] numArr2 = new String[5];
+            
+            numArr[0] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[0])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[1])));
+            numArr[1] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[1])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[2])));
+            numArr[2] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[2])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[3])));
+            numArr[3] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[3])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[4])));
+            numArr[4] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[4])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[0])));
+            for(int i=0;i<qiQuNumberArr.length;i++) {
+            	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
+            	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
+            	
+            	int c = (a+b)%10;
+            	numArr2[i]=String.valueOf(c);
+            }
+            String code = StringUtils.join(numArr, ",");
+            String code2 = StringUtils.join(numArr2, ",");
+            String onlineTime = tencentOnline.getOnlinetime();
+//            String timestamp = "";
+//            try {
+//                timestamp = SimpleParse.parse(onlineTime).getTime() / 1000 + "";
+//            } catch (ParseException e) {
+//                e.printStackTrace();
+//            }
+            logger.info("getHeneiQiquApi shengcheng1 :{} ,{}" ,issue,code);
+            logger.info("getHeneiQiquApi shengcheng2 :{} ,{}" ,issue,code2);
+            LotteryIssueResult issueResult = new LotteryIssueResult();
+            issueResult.setCode(code);
+            issueResult.setIssue(issue);
+            issueResult.setTime(onlineTime);
+            issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+            writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+            
+            DrawConfig drawConfig2 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+            LotteryIssueResult issueResul2 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+            issueResul2.setCode(code2);
+			drawConfig2.setFilePath("/data/openResult/HEQI60SSC2");
+		    writeFilePool.submit(new LotteryResultSaveTask(drawConfig2, issueResul2));
+		    queue.add(entry.getOnlinetime());
+        }
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+	}
+    
+    private void getHeneiQiquFile2(DrawConfig drawConfig, Queue<String> queue) {
+    	String url="http://3a.flbgf.com/HENEI60SSC/results/recent.json";
+    	String heNeiRes = httpConnectionManager.get(url);
+    	
+    	logger.info("HEINEI60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,heNeiRes);
+    	
+    	url="http://qniupin.com/api/tencent/onlineim";
+    	String qiQuRes = httpConnectionManager.get(url);
+    	logger.info("QIQU60SSC ,url:{} ,getHeneiQiquApi spider:{}" ,url,qiQuRes);
+    	
+        ArrayList<TencentOnline> qiQuIssues = null;
+        if (!StringUtils.isEmpty(qiQuRes)) {
+            try {
+            	qiQuIssues = gson.fromJson(qiQuRes, new TypeToken<ArrayList<TencentOnline>>() {
+                }.getType());
+            } catch (Exception e) {
+            }
+        }
+        if (qiQuIssues == null) {
+            return;
+        }
+        if (CollectionUtils.isEmpty(qiQuIssues)) {
+            return;
+        }
+        
+        List<LotteryIssueResult> heNeiList = null;
+	    
+	    if(StringUtils.isBlank(heNeiRes)){
+	    	return;
+	    }
+	    try {
+	    	heNeiList = gson.fromJson(heNeiRes, new TypeToken<ArrayList<LotteryIssueResult>>() {
+            }.getType());
+	        } catch (Exception e) {
+	            e.printStackTrace();
+	        }
+	    if (CollectionUtils.isEmpty(heNeiList)) {
+	        return;
+	    }
+        Map<String,LotteryIssueResult> heNeiMap = new HashMap<>();
+        for(LotteryIssueResult heNeiGwItem: heNeiList){
+        	String issueNoStr = heNeiGwItem.getIssue();
+        	heNeiMap.put(issueNoStr, heNeiGwItem);
+        }
+
+        for (TencentOnline entry : qiQuIssues) {
+        	if(queue.contains(entry.getOnlinetime())) {
+            	continue;
+            }
+            Date onlineDateTime = null;
+            try {
+                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+            String issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+            
+            if(!heNeiMap.containsKey(issue)) {
+            	continue;
+            }
+            TencentOnline tencentOnline = entry;
+            String QiquNumber = buildTencentNumber(tencentOnline.getOnlinenumber());
+            LotteryIssueResult fengHuangItemVo = heNeiMap.get(issue);
+           // String heiNeiNumber= formatOpenCode(fengHuangItemVo.getCode());
+            String heiNeiNumber= fengHuangItemVo.getCode();
+            
+            String [] numArr = new String[5];
+            String[] qiQuNumberArr =QiquNumber.split(",");
+            String[] heNeiNumberArr =heiNeiNumber.split(",");
+            String [] numArr2 = new String[5];
+            
+            numArr[0] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[0])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[1])));
+            numArr[1] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[1])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[2])));
+            numArr[2] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[2])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[3])));
+            numArr[3] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[3])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[4])));
+            numArr[4] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[4])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[0])));
+            for(int i=0;i<qiQuNumberArr.length;i++) {
+            	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
+            	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
+            	
+            	int c = (a+b)%10;
+            	numArr2[i]=String.valueOf(c);
+            }
+            String code = StringUtils.join(numArr, ",");
+            String code2 = StringUtils.join(numArr2, ",");
+            String onlineTime = tencentOnline.getOnlinetime();
+//            String timestamp = "";
+//            try {
+//                timestamp = SimpleParse.parse(onlineTime).getTime() / 1000 + "";
+//            } catch (ParseException e) {
+//                e.printStackTrace();
+//            }
+            logger.info("getHeneiQiquApi shengcheng1 :{} ,{}" ,issue,code);
+            logger.info("getHeneiQiquApi shengcheng2 :{} ,{}" ,issue,code2);
+            LotteryIssueResult issueResult = new LotteryIssueResult();
+            issueResult.setCode(code);
+            issueResult.setIssue(issue);
+            issueResult.setTime(onlineTime);
+            issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+            writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+            
+            DrawConfig drawConfig2 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+            LotteryIssueResult issueResul2 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+            issueResul2.setCode(code2);
+			drawConfig2.setFilePath("/data/openResult/HEQI60SSC2");
+		    writeFilePool.submit(new LotteryResultSaveTask(drawConfig2, issueResul2));
+		    queue.add(entry.getOnlinetime());
+        }
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+	}
+
+    
+    private void getHeneiQiquFileOld(DrawConfig drawConfig, Queue<String> queue) {
     	String url="https://api.fhlmapi.com/api/fhlm/HN60/5";
     	String heNeiRes = httpConnectionManager.get(url);
     	
@@ -643,15 +2048,22 @@ public class ApiPlusService {
             String [] numArr = new String[5];
             String[] qiQuNumberArr =QiquNumber.split(",");
             String[] heNeiNumberArr =heiNeiNumber.split(",");
+            String [] numArr2 = new String[5];
             
+            numArr[0] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[0])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[1])));
+            numArr[1] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[1])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[2])));
+            numArr[2] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[2])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[3])));
+            numArr[3] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[3])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[4])));
+            numArr[4] = get2NumHezhiWeishu(Integer.parseInt(StringUtils.trim(qiQuNumberArr[4])),Integer.parseInt(StringUtils.trim(heNeiNumberArr[0])));
             for(int i=0;i<qiQuNumberArr.length;i++) {
             	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
             	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
             	
             	int c = (a+b)%10;
-            	numArr[i]=String.valueOf(c);
+            	numArr2[i]=String.valueOf(c);
             }
             String code = StringUtils.join(numArr, ",");
+            String code2 = StringUtils.join(numArr2, ",");
             String onlineTime = tencentOnline.getOnlinetime();
 //            String timestamp = "";
 //            try {
@@ -659,18 +2071,30 @@ public class ApiPlusService {
 //            } catch (ParseException e) {
 //                e.printStackTrace();
 //            }
-            logger.info("getHeneiQiquApi shengcheng :{} ,{}" ,issue,code);
-            queue.add(entry.getOnlinetime());
+            logger.info("getHeneiQiquApi shengcheng1 :{} ,{}" ,issue,code);
+            logger.info("getHeneiQiquApi shengcheng2 :{} ,{}" ,issue,code2);
             LotteryIssueResult issueResult = new LotteryIssueResult();
             issueResult.setCode(code);
             issueResult.setIssue(issue);
             issueResult.setTime(onlineTime);
             issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
             writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+            
+            DrawConfig drawConfig2 =gson.fromJson(gson.toJson(drawConfig), DrawConfig.class);
+            LotteryIssueResult issueResul2 =gson.fromJson(gson.toJson(issueResult), LotteryIssueResult.class);
+            issueResul2.setCode(code2);
+			drawConfig2.setFilePath("/data/openResult/HEQI60SSC2");
+		    writeFilePool.submit(new LotteryResultSaveTask(drawConfig2, issueResul2));
+		    queue.add(entry.getOnlinetime());
         }
         while (queue.size() > 10) {
             queue.poll();
         }
+	}
+
+	private String get2NumHezhiWeishu(int a, int b) {
+		int c = (a+b)%10;
+		return String.valueOf(c);
 	}
 
 	private void getFromNewKcw(DrawConfig drawConfig, Queue<String> queue) {
@@ -704,9 +2128,9 @@ public class ApiPlusService {
              }
            
              String formatIssue = issue;
-             if (drawConfig.getConverter() != null) {
-             	formatIssue = drawConfig.getConverter().convert(issue);
- 	        }
+//             if (drawConfig.getConverter() != null) {
+//             	formatIssue = drawConfig.getConverter().convert(issue);
+// 	        }
              Date onlineDateTime = null;
              String onlineStr =issueBean.getDrawTime();
              try {
@@ -1108,6 +2532,69 @@ public class ApiPlusService {
 	            queue.poll();
 	        }
 	}
+	
+	
+	private void getFrom77tjFile2(DrawConfig drawConfig, Queue<String> queue) {
+		String url = Tencent77tjHost+"/api/tencent/onlineim";
+        
+        
+        String response = httpConnectionManager.get(url);
+
+	        //String response = get(Tencent77tjHost, url);
+	        logger.info("NEW QIQU spider:" + response);
+	        ArrayList<TencentOnline> issues = null;
+	        if (!StringUtils.isEmpty(response)) {
+	            try {
+	                issues = gson.fromJson(response, new TypeToken<ArrayList<TencentOnline>>() {
+	                }.getType());
+	            } catch (Exception e) {
+	            }
+	        }
+
+	        if (issues == null) {
+	            return;
+	        }
+
+	        if (CollectionUtils.isEmpty(issues)) {
+	            return;
+	        }
+
+	        for (TencentOnline entry : issues) {
+	        	if(queue.contains(entry.getOnlinetime())) {
+	            	continue;
+	            }
+	            queue.add(entry.getOnlinetime());
+	            Date onlineDateTime = null;
+	            try {
+	                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+	            } catch (ParseException e) {
+	                e.printStackTrace();
+	            }
+
+	            String issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+	            
+                TencentOnline tencentOnline = entry;
+                String onlineTime = tencentOnline.getOnlinetime();
+                String lotteryNumber = tencentOnline.getOnlinenumber();
+
+                String timestamp = "";
+                try {
+                    timestamp = SimpleParse.parse(onlineTime).getTime() / 1000 + "";
+                } catch (ParseException e) {
+                    e.printStackTrace();
+                }
+                LotteryIssueResult issueResult = new LotteryIssueResult();
+                issueResult.setCode(lotteryNumber);
+                issueResult.setIssue(issue);
+                issueResult.setTime(onlineTime);
+                issueResult.setOpentimestamp(timestamp);
+                writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+	        }
+
+	        while (queue.size() > 10) {
+	            queue.poll();
+	        }
+	}
 
 	private void getXingCaiApi(DrawConfig drawConfig, Queue<String> queue) {
 		String spiderIp = drawConfig.getSpiderIp();
@@ -1156,6 +2643,63 @@ public class ApiPlusService {
         while (queue.size() > QUEUE_MAX_SIZE) {
             queue.poll();
         }
+	}
+	
+	private void heNeiFHwFile(DrawConfig drawConfig, Queue<String> queue) {
+		String url="https://api.fhlmapi.com/api/lottery/"+drawConfig.getToCode()+"/5";
+		
+		String response = httpConnectionManager.get(url);
+		logger.info("{} ,url:{} ,heNeiFHwFile spider:" ,drawConfig.getToCode(),url,response);
+		
+		
+		FengHuangVo fengHuangVo=null;
+	    
+	    if(StringUtils.isBlank(response)){
+	    	return;
+	    }
+	    try {
+	    	fengHuangVo = gson.fromJson(response, new TypeToken<FengHuangVo>() {
+            }.getType());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (fengHuangVo == null || fengHuangVo.getData()==null) {
+            return;
+        }
+        List<FengHuangItemVo> list= fengHuangVo.getData();
+        
+        if(CollectionUtils.isEmpty(list)){
+        	return;
+        }
+        
+        for(FengHuangItemVo heNeiGwItem: list){
+        	String issueNoStr = heNeiGwItem.getIssue();
+        	
+    	    if (queue.contains(issueNoStr)) {
+    	    	continue;
+    	    }
+    	    if (drawConfig.getConverter() != null) {
+    	    	issueNoStr = drawConfig.getConverter().convert(issueNoStr);
+            }
+	  	    String timestamp = heNeiGwItem.getEnd_time();
+	        try {
+	            timestamp = SimpleParse.parse(heNeiGwItem.getEnd_time()).getTime()+"";
+	        } catch (ParseException e) {
+	            e.printStackTrace();
+	        }
+	        String code  = StringUtils.trim(heNeiGwItem.getCode()).replaceAll(" ", ",");
+	        LotteryIssueResult issueResult = new LotteryIssueResult();
+            issueResult.setCode(code);
+            issueResult.setIssue(issueNoStr);
+            issueResult.setTime(heNeiGwItem.getEnd_time());
+            issueResult.setOpentimestamp(timestamp);
+            writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+	        queue.add(issueNoStr);
+	     }
+        while (queue.size() > QUEUE_MAX_SIZE) {
+            queue.poll();
+        }
+        
 	}
 
 	private void heNeiFHw(DrawConfig drawConfig, Queue<String> queue) {
@@ -2127,6 +3671,18 @@ public class ApiPlusService {
                 continue;
             }
             
+            boolean isTronSSCSerise = handTronSscSeries(lotteryCode, issueBean);
+
+            if (toLotteryCode.equals("TRX60SSC2") && !isTronSSCSerise) {
+                continue;
+            }
+            
+            boolean isHashSSCSerise = handHashSscSeries(lotteryCode, issueBean);
+
+            if (toLotteryCode.equals("HASH60SSC") && !isHashSSCSerise) {
+                continue;
+            }
+            
             if (!queue.contains(issueBean.getIssue())) {
                 queue.add(issueBean.getIssue());
                 String kenoCode = issueBean.getCode();
@@ -2142,6 +3698,14 @@ public class ApiPlusService {
                 issueResult.setYuLiu(issueBean.getYuLiu());
                 issueResult.setCode1(issueBean.getCode1());
                 issueResult.setCode2(issueBean.getCode2());
+                issueResult.setBlockId(issueBean.getBlockId());
+                issueResult.setBlockHash(issueBean.getBlockHash());
+                issueResult.setTransactionsCount(issueBean.getTransactionsCount());
+                issueResult.setShaHash(issueBean.getShaHash());
+                issueResult.setVal(issueBean.getVal());
+                issueResult.setTjTime(issueBean.getTjTime());
+                issueResult.setHuobiCode(issueBean.getHuobiCode());
+                issueResult.setBianCode(issueBean.getBianCode());
                 try {
                     if (lotteryCode.contains("TX60PK10")) {
                         StringBuffer strBu = new StringBuffer(kenoCode);
@@ -2173,6 +3737,78 @@ public class ApiPlusService {
     }
 
    
+
+	private boolean handHashSscSeries(String lotteryCode, LotteryIssueResult issueBean) {
+		String txffcIssue = issueBean.getIssue();
+        if (!lotteryCode.equals("HASH180SSC") && !lotteryCode.equals("HASH300SSC")
+                && !lotteryCode.equals("HASH600SSC")) {
+            return true;
+        }
+        String dateStr = txffcIssue.split("-")[0];
+        int issueIndex = Integer.parseInt(txffcIssue.split("-")[1]);
+
+        if (lotteryCode.equals("HASH180SSC") && issueIndex % 3 != 0) {
+            return false;
+        }
+        if (lotteryCode.equals("HASH300SSC") && issueIndex % 5 != 0) {
+            return false;
+        }
+        if (lotteryCode.equals("HASH600SSC") && issueIndex % 10 != 0) {
+            return false;
+        }
+        String issueNum = null;
+
+        int mod = 0;
+        if (lotteryCode.equals("HASH300SSC")) {
+            mod = issueIndex / 5;
+        }
+        if (lotteryCode.equals("HASH180SSC")) {
+            mod = issueIndex / 3;
+        }
+        if (lotteryCode.equals("HASH600SSC")) {
+            mod = issueIndex / 10;
+        }
+        issueNum = dateStr + "-" + String.format("%03d", mod);
+        logger.info("***************哈希彩：{},本来奖期：{},需要转换成:{}", lotteryCode, txffcIssue, issueNum);
+        issueBean.setIssue(issueNum);
+        return true;
+	}
+
+	private boolean handTronSscSeries(String lotteryCode, LotteryIssueResult issueBean) {
+		String txffcIssue = issueBean.getIssue();
+        if (!lotteryCode.equals("TRX180SSC") && !lotteryCode.equals("TRX300SSC")
+                && !lotteryCode.equals("TRX600SSC")) {
+            return true;
+        }
+        String dateStr = txffcIssue.split("-")[0];
+        int issueIndex = Integer.parseInt(txffcIssue.split("-")[1]);
+
+        if (lotteryCode.equals("TRX180SSC") && issueIndex % 3 != 0) {
+            return false;
+        }
+        if (lotteryCode.equals("TRX300SSC") && issueIndex % 5 != 0) {
+            return false;
+        }
+        if (lotteryCode.equals("TRX600SSC") && issueIndex % 10 != 0) {
+            return false;
+        }
+        String issueNum = null;
+
+        int mod = 0;
+        if (lotteryCode.equals("TRX300SSC")) {
+            mod = issueIndex / 5;
+        }
+        if (lotteryCode.equals("TRX180SSC")) {
+            mod = issueIndex / 3;
+        }
+        if (lotteryCode.equals("TRX600SSC")) {
+            mod = issueIndex / 10;
+        }
+        issueNum = dateStr + "-" + String.format("%03d", mod);
+        logger.info("***************波长彩：{},本来奖期：{},需要转换成:{}", lotteryCode, txffcIssue, issueNum);
+        issueBean.setIssue(issueNum);
+        return true;
+	}
 
 	private boolean handQiQuSscSeries(String lotteryCode, LotteryIssueResult issueBean) {
         String txffcIssue = issueBean.getIssue();
@@ -2561,7 +4197,7 @@ public class ApiPlusService {
             hostDomain = StringUtils.trim(spiderIp);
         }
         String response = get(hostDomain, url);
-        logger.info("getFromApiPlus lottery:{},json:{}", drawConfig.getLotteryCode(), response);
+        logger.info("getFromApiPlus url:{},lottery:{},json:{}",url, drawConfig.getLotteryCode(), response);
 
         ArrayList<TxZjshSscAM> issues = null;
         if (!StringUtils.isEmpty(response)) {
@@ -2596,8 +4232,47 @@ public class ApiPlusService {
                 String codeType = drawConfig.getType();
                 String onlineCode = tencentOnline.getCode();
                 if (StringUtils.isNotBlank(codeType)) {
-                    lotteryNumber = tencentOnline.getCode();
-                    onlineCode = tencentOnline.getYuLiu();
+                	if (drawConfig.getLotteryCode().contains("HASH60SSC") || drawConfig.getLotteryCode().contains("HASH180SSC") || drawConfig.getLotteryCode().contains("HASH300SSC") || drawConfig.getLotteryCode().contains("HASH600SSC")) {
+                		 String[] arr = tencentOnline.getCode().split("\\|");
+                		 if(arr.length == 3) {
+                			 String tempCode = arr[0];
+                			 //String txidHash = arr[1];
+                			 String blockHash = arr[2];
+                			 onlineCode = blockHash;
+                			 lotteryNumber = tempCode;
+                		 } if(arr.length == 4) {
+                			 String tempCode = arr[0];
+                			 //String txidHash = arr[1];
+                			 String blockHash = arr[3];
+                			 onlineCode = blockHash;
+                			 lotteryNumber = tempCode;
+                		 }else {
+                			 lotteryNumber = tencentOnline.getCode();
+                		 }
+                	}else if (drawConfig.getLotteryCode().contains("HASH60NNC")){
+                		 String[] arr = tencentOnline.getCode().split("\\|");
+                		 
+                		 if(arr.length == 3) {
+                			 String tempCode = arr[0];
+                			 //String txidHash = arr[1];
+                			 String blockHash = arr[2];
+                			 onlineCode = blockHash;
+                			 lotteryNumber = tempCode;
+                		 } if(arr.length == 4) {
+                			 String tempCode = arr[0];
+                			 //String txidHash = arr[1];
+                			 String blockHash = arr[3];
+                			 onlineCode = blockHash;
+                			 lotteryNumber = tempCode;
+                		 }else {
+                			 lotteryNumber = tencentOnline.getCode();
+                		 }
+                		 lotteryNumber = formartHASH60NNC(lotteryNumber);
+                	}else {
+                		 lotteryNumber = tencentOnline.getCode();
+                         onlineCode = tencentOnline.getYuLiu();
+                	}
+                    
                 } else {
                     if (drawConfig.getLotteryCode().contains("PK10")) {
                         lotteryNumber = tencentOnline.getPk10Code();
@@ -2616,8 +4291,21 @@ public class ApiPlusService {
             queue.poll();
         }
     }
+    
+    
+   
 
-    private String buildZjtxUrl(DrawConfig drawConfig) {
+    private String formartHASH60NNC(String code) {
+    	String[] codeArr = code.split(",");
+    	List<String> list = new ArrayList<String>();
+    	
+    	for(int i = 1;i < codeArr.length; i++) {
+    		list.add(codeArr[i]);
+    	}
+		return StringUtils.join(list,",");
+	}
+
+	private String buildZjtxUrl(DrawConfig drawConfig) {
         String url = "/";
 
         if (drawConfig.getToCode().contains("TX30SSC")) {
@@ -2800,6 +4488,27 @@ public class ApiPlusService {
             queue.poll();
         }
 
+    }
+    
+    private  String buidl1440IssueByTimeStamp(Long timeStamp) {
+    	
+        String dateStr = new SimpleDateFormat("yyyyMMdd").format(new Date());
+
+        Calendar c = Calendar.getInstance();
+        c.setTime(new Date(timeStamp));
+        int h = c.get(Calendar.HOUR_OF_DAY);
+        int m = c.get(Calendar.MINUTE);
+
+        int index = 0;
+        if (h > 0 || m > 0) {
+            index = h * 60 + m;
+        } else {
+            Integer dayTimeIndex = Integer.valueOf(dateStr);
+            dateStr = String.valueOf(dayTimeIndex - 1);
+            index = 1440;
+        }
+        String issue = dateStr + "-" + String.format("%04d", index);
+        return issue;
     }
 
     private void getFromTecentMaFile(DrawConfig drawConfig, Queue<String> queue) {
@@ -2998,8 +4707,70 @@ public class ApiPlusService {
         
         String response = httpConnectionManager.get(url);
 
-       // String response = get(Tencent77tjHost, url);
-        logger.info("TXSSC spider:" + response);
+//        String response = get(Tencent77tjHost, url);
+        logger.info("QIQU60SSC url:{}, spider:{}", url, response);
+        ArrayList<TencentOnline> issues = null;
+        if (!StringUtils.isEmpty(response)) {
+            try {
+                issues = gson.fromJson(response, new TypeToken<ArrayList<TencentOnline>>() {
+                }.getType());
+            } catch (Exception e) {
+            }
+        }
+
+        if (issues == null) {
+            return;
+        }
+
+        if (CollectionUtils.isEmpty(issues)) {
+            return;
+        }
+
+        for (TencentOnline entry : issues) {
+            Date onlineDateTime = null;
+            try {
+                onlineDateTime = SimpleParse.parse(entry.getOnlinetime());
+            } catch (ParseException e) {
+                e.printStackTrace();
+            }
+
+            String issue = "";
+            if (drawConfig.getLotteryCode().equals("TX30SSC")) {
+                issue = buidlTencent30SSCIssue(entry.getOnlinetime(), onlineDateTime);
+            } else {
+                issue = buidlTencentIssue(entry.getOnlinetime(), onlineDateTime);
+            }
+            if (!queue.contains(issue)) {
+                // 鏍煎紡鍖栧鏈�
+                TencentOnline tencentOnline = entry;
+                String onlineTime = tencentOnline.getOnlinetime();
+                String lotteryNumber = buildTencentNumber(tencentOnline.getOnlinenumber());
+
+                notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, lotteryNumber, onlineTime,
+                        String.valueOf(onlineDateTime.getTime() / 1000), tencentOnline.getOnlinenumber());
+
+                // if (queue.size() > QUEUE_MAX_SIZE) {
+                //
+                // }
+                queue.add(issue);
+            }
+        }
+
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+
+    }
+    
+    
+    private void getFrom77tjOldHttp(DrawConfig drawConfig, Queue<String> queue) {
+        String url = Tencent77tjHost+"/api/tencent/onlineim";
+        
+        
+//        String response = httpConnectionManager.get(url);
+        
+        String response = get(Tencent77tjHost, url);
+        logger.info("QIQU60SSC url:{} spider:{}",url, response);
         ArrayList<TencentOnline> issues = null;
         if (!StringUtils.isEmpty(response)) {
             try {
@@ -3374,6 +5145,11 @@ public class ApiPlusService {
     private String getPlatformUrl(PlatformConfig platformConfig) {
         return platformConfig.getUrl();
     }
+    
+    public static void main56(String[] args) {
+    	String format1 = SimpleYEARParse.format(new Date());
+    	System.out.println(format1);
+	}
 
     public String get(String host, String queryParams) {
         HttpHost target = HttpHost.create(host);
@@ -3605,118 +5381,98 @@ public class ApiPlusService {
         // System.out.println(System.currentTimeMillis());
     }
 
-    public static void main(String[] args) throws ParseException {
-    
-        // Calendar c = Calendar.getInstance();
-        // c.setTimeInMillis(new Date().getTime());
-        // System.out.println(c.getTime());
-        // String buildKoreanCode = buildKoreanCode("01,03,04,09,22,23,32,35,37,44,49,55,57,58,59,61,67,75,76,80+09");
-        // System.out.println(buildKoreanCode);
-        // String buildTencentNumber = "311107253";
-        // String[] arr = buildTencentNumber.split("");
-        // int sum = 0;
-        // for (String str : arr) {
-        // sum += Integer.parseInt(str);
-        // }
-        // System.out.println(sum);
-        // String str =
-        // "1b82211c0aa8e5b05a383227146fd840201b7b01905fc3499028eacf2b0debd96d79ae51c85f4c5d6fa4af34a5d0f8c1afc3b49bee0a74a69145e575ec022000";
-        // str = str.trim();
-        // List<Integer> list = new ArrayList<>();
-        // if (str != null && !"".equals(str)) {
-        // for (int i = 0; i < str.length(); i++) {
-        // if (str.charAt(i) >= 48 && str.charAt(i) <= 57) {
-        // Integer charAt = str.charAt(i) - '0';
-        // list.add(charAt);
-        // }
-        // }
-        // }
-        //
-        // List<String> codeList = new ArrayList<>();
-        //
-        // for (Integer num : list) {
-        // if (codeList.size() == 10) {
-        // break;
-        // }
-        // String kk = null;
-        // if (num.intValue() == 0) {
-        // kk = "10";
-        // } else if (num.intValue() < 10) {
-        // kk = "0" + num;
-        // }
-        // if (!codeList.contains(kk)) {
-        // codeList.add(kk);
-        // }
-        // }
-        // System.out.println(StringUtils.join(codeList, ","));
-        // String str = "2018-08-11 00:00:00";
-        // Date date = SimpleParse.parse(str);
-        // Calendar c = Calendar.getInstance();
-        // c.setTime(date);
-        // int hour = c.get(Calendar.HOUR_OF_DAY);
-        // int min = c.get(Calendar.MINUTE);
-        // // String kk = str.trim().split(" ")[1].split(":")[1];
-        // // int h = Integer.parseInt("02");
-        // int kk = hour * 60 + min;
-        // System.out.println(min);
-        // System.out.println(kk);
-        // System.out.println(kk % 5);
-        // System.out.println(kk / 5);
-        // if (min == 0 && hour == 0) {
-        // c.add(Calendar.DATE, -1);
-        // String dateStr = SimpleParseByDate.format(c.getTime());
-        // System.out.println("dateStr:" + dateStr);
-        // }
-        // System.out.println(String.format("%03d", 4));
-        // String[] codeArr = "02,08,07,03,01,10,04,09,05,06".split(",");
-        // int[] numberArr = new int[5];
-        // numberArr[0] = (Integer.parseInt(StringUtils.trim(codeArr[0])) + Integer.parseInt(StringUtils.trim(codeArr[1])))
-        // % 10;
-        // numberArr[1] = (Integer.parseInt(StringUtils.trim(codeArr[2])) + Integer.parseInt(StringUtils.trim(codeArr[3])))
-        // % 10;
-        // numberArr[2] = (Integer.parseInt(StringUtils.trim(codeArr[4])) + Integer.parseInt(StringUtils.trim(codeArr[5])))
-        // % 10;
-        // numberArr[3] = (Integer.parseInt(StringUtils.trim(codeArr[6])) + Integer.parseInt(StringUtils.trim(codeArr[7])))
-        // % 10;
-        // numberArr[4] = (Integer.parseInt(StringUtils.trim(codeArr[8])) + Integer.parseInt(StringUtils.trim(codeArr[9])))
-        // % 10;
-        // String s = StringUtils.join(numberArr, ',');
-        // System.out.println(s.toString());
-        // System.out.println(3 / 2);
-
-        // String[] numStrs = "04,05,08,15,16,22,24,25,26,33,35,36,40,41,44,45,49,51,67,69".split(",");
-        //
-        // int[] resultNums = new int[5];
-        //
-        // for (int i = 0; i < 5; i++) {
-        // resultNums[i] = Integer.valueOf(numStrs[i]);
-        // }
-        // String resultCode = StringUtils.join(resultNums, ',');
-        // System.out.println(resultCode);
-        // String buildTencentNumber = buildTencentNumber("333070926");
-        // System.out.println(buildTencentNumber);
-        // Date d = new Date(1557292872000L);
-        // System.out.println(d);
-        //long currentTimeMillis = System.currentTimeMillis();
-//        String issue = String.format("%04d", 1003);
-//        System.out.println(issue);
-        // 1574066468
-//   	 String[] numStrs = "98786".split("");
-//
-//     int[] resultNums = new int[numStrs.length];
-//
-//     for (int i = 0; i < resultNums.length; i++) {
-//         resultNums[i] = Integer.valueOf(numStrs[i]);
-//     }
-//     String resultCode = StringUtils.join(resultNums, ',');
-//     System.out.println(resultCode);
-//    	int a = 7;
-//    	int b=5;
-//    	int c=(a+b)%10;
-//    	System.out.println(c);
-    	String code = "31,29,37,28,5,14,11";
-    	String formatLow10OpenCode = formatLow10OpenCode(code);
-    	System.out.println(formatLow10OpenCode);
+    public static void main55(String[] args) throws ParseException {
+    	String [] numArr = new String[5];
+    	String QiquNumber= "4,8,6,5,2";
+    	String heiNeiNumber = "5,3,4,6,8";
+    	 String[] qiQuNumberArr =QiquNumber.split(",");
+         String[] heNeiNumberArr =heiNeiNumber.split(",");
+         
+         for(int i=0;i<qiQuNumberArr.length;i++) {
+         	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
+         	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
+         	
+         	int c = (a+b)%10;
+         	numArr[i]=String.valueOf(c);
+         }
+         String code = StringUtils.join(numArr, ",");
+         System.out.println(code);
     }
+    
+    public static void main45(String[] args) {
+    	  try {
+			String url = "http://jb28.cc/";
+			Document document = Jsoup.parse(new URL(url), 10000);
+			
+			System.out.println(document.toString());
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} 
+	}
+    public static void main(String[] args) {
+//    	Long timeL = 1629567240L*1000L+60*1000;
+//    	Date dTime = new Date(timeL);
+//    	String format = SimpleParse.format(dTime);
+//    	String buidlTencentIssue = buidlTencentIssue(format, dTime);
+//    	System.out.println(buidlTencentIssue);
+//    	String volAmountStr = "24.72633000";
+//    	 String volAmountStr1 = volAmountStr.substring(0,volAmountStr.indexOf("."));
+//    	 String  volAmountStr2 = volAmountStr.substring(volAmountStr.indexOf(".")+1);
+//    	 String [] arr = volAmountStr2.split("");
+// 		StringBuffer strBuffer = new StringBuffer();
+// 		
+// 		int sum = 0;
+// 		for(int i = 0;i<arr.length;i++) {
+// 			int tempNum = Integer.parseInt(arr[i]);
+// 			if(i>=1 && i<=4) {
+// 				strBuffer.append(",");
+// 				strBuffer.append(tempNum);
+// 			}
+// 			sum +=tempNum;
+// 		}
+// 		String [] arr2 = volAmountStr1.split("");
+// 		for(int i = 0;i<arr2.length;i++) {
+// 			int tempNum = Integer.parseInt(arr2[i]);
+// 			sum +=tempNum;
+// 		}
+// 		
+// 		int mol = sum % 10;
+//    	System.out.println(String.valueOf(mol)+strBuffer.toString());
+//    	System.out.println(volAmountStr2);
+//    	String formatOpenCode = "02 11 10 09 07";
+//    	formatOpenCode= formatOpenCode.replaceAll(" ", ",");
+//    	System.out.println(formatOpenCode);
+    	String QiquNumber = "5,5,7,1,3";
+    	String heiNeiNumber = "4,5,1,5,6";
+    	 String[] qiQuNumberArr =QiquNumber.split(",");
+         String[] heNeiNumberArr =heiNeiNumber.split(",");
+         String [] numArr = new String[5];
+         
+         for(int i=0;i<qiQuNumberArr.length;i++) {
+         	int a = Integer.parseInt(StringUtils.trim(qiQuNumberArr[i]));
+         	int b = Integer.parseInt(StringUtils.trim(heNeiNumberArr[i]));
+         	
+         	int c = (a+b)%10;
+         	numArr[i]=String.valueOf(c);
+         }
+         String code = StringUtils.join(numArr, ",");
+         System.out.println(code);
+	}
+    public static void maintyty(String[] args) {
+    	String hash = "0000000001f91c615732d1009f47c755488871472c43ab4f7b122d26c5a95ca6";
+    	String jiaoyiCount = "81";
+    	String needSha256Str = hash+jiaoyiCount;
+		String sha256StrJava = SHA256Util.getSHA256StrJava(needSha256Str);
+        
+        
+        String code2 = SHA256Util.getNumFromSha256Str2(sha256StrJava);
+        System.out.println(code2);
+	}
+	public static void main33(String[] args) throws MalformedURLException, IOException {
+        Document document = Jsoup.parse(new URL("https://p2p.binance.com/en/trade/sell/USDT?fiat=CNY&payment=ALL"), 10000);
+        System.out.println(document.toString());
+        
+	}
 
 }

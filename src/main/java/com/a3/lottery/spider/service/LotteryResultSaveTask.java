@@ -2,6 +2,7 @@ package com.a3.lottery.spider.service;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -16,6 +17,7 @@ import com.a3.lottery.domain.config.DrawConfig;
 import com.a3.lottery.module.LotteryIssueResultComparator;
 import com.google.common.reflect.TypeToken;
 import com.google.gson.Gson;
+import com.google.gson.stream.JsonReader;
 
 public class LotteryResultSaveTask extends Thread {
 
@@ -56,7 +58,10 @@ public class LotteryResultSaveTask extends Thread {
         String dayFileName = getDayFileName(drarConfig, dayString);
         try {
             String contents = FileUtils.readFileToString(new File(dayFileName));
-            results = gson.fromJson(StringUtils.trim(contents), new TypeToken<ArrayList<LotteryIssueResult>>() {
+            Gson gson = new Gson();
+            JsonReader reader = new JsonReader(new StringReader(StringUtils.trim(contents)));
+            reader.setLenient(true);
+            results = gson.fromJson(reader, new TypeToken<ArrayList<LotteryIssueResult>>() {
             }.getType());
         } catch (IOException e) {
             e.printStackTrace();

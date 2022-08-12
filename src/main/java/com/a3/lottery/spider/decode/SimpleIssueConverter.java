@@ -37,26 +37,26 @@ public class SimpleIssueConverter implements IssueConverter {
     public static void main(String[] args) {
         {
             SimpleIssueConverter converter = new SimpleIssueConverter(8, -1);
-            String expect = "2021030815";
+            String expect = "20210517132";
 
             System.out.println(converter.convert(expect));
         }
 
         {
             SimpleIssueConverter converter = new SimpleIssueConverter(8, 0);
-            String expect = "2021030815";
+            String expect = "21100742";
 
             System.out.println(converter.convert(expect));
             ;
         }
         {
-            SimpleIssueConverter converter = new SimpleIssueConverter(8, 1);
-            String expect = "2021030815";
+            SimpleIssueConverter converter = new SimpleIssueConverter(6, 0);
+            String expect = "21100705";
 
             System.out.println(converter.convert(expect));
             ;
-            String formatCode=String.format("%02d", 1);
-            System.out.println(formatCode);
+//            String formatCode=String.format("%02d", 1);
+//            System.out.println(formatCode);
         }
         
         
