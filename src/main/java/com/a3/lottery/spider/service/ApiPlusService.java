@@ -15,6 +15,7 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -30,6 +31,7 @@ import javax.annotation.PostConstruct;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
+import org.apache.commons.lang3.time.DateUtils;
 import org.apache.http.ConnectionReuseStrategy;
 import org.apache.http.HttpClientConnection;
 import org.apache.http.HttpEntity;
@@ -107,6 +109,7 @@ import com.a3.lottery.domain.LotteryDrawRequestBean;
 import com.a3.lottery.domain.LotteryDrawResponseBean;
 import com.a3.lottery.domain.LotteryIssueResult;
 import com.a3.lottery.domain.ManyCaiAM;
+import com.a3.lottery.domain.ManyCaiAMNEW;
 import com.a3.lottery.domain.NewKcwAM;
 import com.a3.lottery.domain.NewKcwItem;
 import com.a3.lottery.domain.NewKjapiAM;
@@ -268,8 +271,12 @@ public class ApiPlusService {
             getxingyuncaiFile(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("manycai")) {
             getManycai(drawConfig, queue);
+        }else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("manycainew")) {
+            getManycaiNew(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("manycaiFile")) {
             getManycaiFile(drawConfig, queue);
+        } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("manycaiFilenew")) {
+            getManycaiFileNew(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("bitcoinum")) {
             getBitcoinumFile(drawConfig, queue);
         } else if (StringUtils.isNotEmpty(drawConfig.getRoute()) && drawConfig.getRoute().equals("bcbcaiFile")) {
@@ -336,6 +343,8 @@ public class ApiPlusService {
     }
     
   
+
+	
 
 	private synchronized void getCnd28File(DrawConfig drawConfig, Queue<String> queue) {
         String url = drawConfig.getSpiderIp();
@@ -1578,7 +1587,7 @@ public class ApiPlusService {
 	private void get168KjApiFile2(DrawConfig drawConfig, Queue<String> queue) {
 		String url="/QuanGuoCai/getLotteryInfo.do?lotCode="+drawConfig.getToCode();
 		
-		if(drawConfig.getToCode().equals("10041") || drawConfig.getToCode().equals("10041")) {
+		if(drawConfig.getToCode().equals("10041") || drawConfig.getToCode().equals("10043")) {
 			url="/QuanGuoCai/getLotteryInfo1.do?lotCode="+drawConfig.getToCode();
 		}
 		
@@ -2846,11 +2855,67 @@ public class ApiPlusService {
             queue.poll();
         }
 	}
-
+	
 	private void getSteamParseHtml(DrawConfig drawConfig, Queue<String> queue) {
         try {
-            String url = "https://store.steampowered.com/stats/";
-            Document document = Jsoup.parse(new URL("https://store.steampowered.com/stats/"), 10000);
+        	Document document = Jsoup.parse(new URL("https://store.steampowered.com/about/"), 10000);
+			  Elements elementsByClass = document.getElementsByClass("online_stat");
+			  Element firstEle = elementsByClass.first();
+			  Element lastEle = elementsByClass.last();
+			  
+			  String zaixianNum = firstEle.text().replace("online ", "").replace(",", "");
+			  String zhengzaiyouxiNum = lastEle.text().replace("playing now ", "").replace(",", "");
+//			  System.out.println(text1);
+//			  System.out.println(text2);
+			  
+			  String openCode = zaixianNum+"@"+zhengzaiyouxiNum;
+			  
+			  String key = "STEMFFC:" + openCode;
+			  Long count = jedisTemplate.incr(key);
+			  
+			  Date date = new Date();
+			  String timeStr = SimpleParse.format(date);
+			  
+            String str = key+" time:"+ timeStr;
+            logger.info("steam抓取:{},redis缓存次数:{}", str,count);
+            if (count.intValue() == 1) {
+            	String nowIssue = TecentMmaService.buidlTencentIssue();
+                String issue = nowIssue;
+                if (!queue.contains(issue)) {
+//                	 String path = "/data/steamIssue.txt";
+                     // FileUtils.writeStringToFile(new File(path), str, true);
+                	String buildSteamNumber = buildSteamNumber(zaixianNum,zhengzaiyouxiNum);
+                	 logger.info("steam生成新的将期:{},结果:{},解析的开奖号码:{}", issue,str,buildSteamNumber);
+//                     List<String> list = new ArrayList<>();
+//                     list.add(str);
+//                     FileUtils.writeLines(new File(path), list, true);
+                    
+                	 
+                    LotteryIssueResult issueResult = new LotteryIssueResult();
+                    issueResult.setCode(buildSteamNumber);
+                    issueResult.setIssue(nowIssue);
+                    issueResult.setCode1(zaixianNum);
+                    issueResult.setCode2(zhengzaiyouxiNum);
+                    issueResult.setTime(SimpleParse.format(date));
+                    issueResult.setOpentimestamp(String.valueOf(date.getTime()));
+                    writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+                    queue.add(issue);
+                }
+            }
+
+            while (queue.size() > QUEUE_MAX_SIZE) {
+                queue.poll();
+            }
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+    }
+
+	private void getSteamParseHtml2(DrawConfig drawConfig, Queue<String> queue) {
+        try {
+            String url = "https://store.steampowered.com/about/";
+            Document document = Jsoup.parse(new URL("https://store.steampowered.com/about/"), 10000);
 
             // System.out.println(document.html());
 
@@ -3443,7 +3508,208 @@ public class ApiPlusService {
         }
 
     }
+    
+    private void getManycaiFileNew(DrawConfig drawConfig, Queue<String> queue) {
+    	 String spiderIp = drawConfig.getSpiderIp();
+         if (StringUtils.isBlank(spiderIp)) {
+             logger.error("getManycai host:为空");
+             return;
+         }
+         String token = drawConfig.getToken();
+         if (StringUtils.isBlank(token)) {
+             logger.error("getManycai token:为空");
+             return;
+         }
+         String url = "/" + drawConfig.getToken();
+         url += "/p/5.json";
+        
+         
+         String hostDomain = StringUtils.trim(spiderIp);
+         String response = get(hostDomain, url);
 
+         logger.info("getManycainewFile lottery:{},json:{}", drawConfig.getLotteryCode(), response);
+         if (StringUtils.isBlank(response)) {
+             logger.error("getManycai response为空 lottery:{},json:{}", drawConfig.getLotteryCode(), response);
+             return;
+         }
+         ManyCaiAMNEW am = null;
+        
+         try {
+         	am = gson.fromJson(StringUtils.trim(response),ManyCaiAMNEW.class);
+         } catch (Exception e) {
+             e.printStackTrace();
+         }
+
+         if (am == null) {
+             return;
+         }
+         ArrayList<ManyCaiAM> issues = null;
+         
+         if (drawConfig.getLotteryCode().contains("HENEI60SSC")) { 
+        	 issues = am.getHN60();
+         }else if (drawConfig.getLotteryCode().contains("3DFC")) {
+        	 issues = am.getFC3D();
+         }else if (drawConfig.getLotteryCode().contains("LHECXJW")) {
+        	 issues = am.getXGLHC();
+         }
+         if (CollectionUtils.isEmpty(issues)) {
+             return;
+         }
+
+         for (ManyCaiAM entry : issues) {
+         	 if (queue.contains(entry.getIssue())) {
+         		 continue;
+         	 }
+             Date onlineDateTime = null;
+             String issue = entry.getIssue();
+             
+             if(drawConfig.getToCode().contains("GD11X5")||drawConfig.getToCode().contains("SD11X5")) {
+             	issue = "20"+entry.getIssue();
+             }
+             if(drawConfig.getToCode().contains("XGLHC")) {
+             	issue = "20"+entry.getIssue();
+             	String [] issueArr =entry.getIssue().split("/");
+             	issue = issueArr[1];
+             }
+             if (drawConfig.getConverter() != null) {
+                 issue = drawConfig.getConverter().convert(issue);
+             }
+             String onlineStr = entry.getOpendate();
+             try {
+                 onlineDateTime = SimpleParse.parse(String.valueOf(onlineStr));
+             } catch (ParseException e) {
+                 logger.error(e.getMessage(), e);
+             }
+             String lotteryNumber = null;
+             lotteryNumber = entry.getCode();
+             if(drawConfig.getToCode().contains("XGLHC")) {
+             	lotteryNumber=lotteryNumber.replaceAll("+", ",");
+             }
+             if(drawConfig.getToCode().contains("11X5")||drawConfig.getToCode().contains("XGLHC")) {
+             	StringBuffer codeStr=new StringBuffer();
+                 String []codeArr = lotteryNumber.split(",");
+                 for(String tempCode: codeArr) {
+ 	            	 String formatCode =  String.format("%02d", Integer.parseInt(tempCode));
+ 	            	 if(codeStr.length()>0) {
+ 	            		 codeStr.append(",");
+ 	            	 }
+ 	            	 codeStr.append(formatCode);
+                 }
+             	 lotteryNumber=codeStr.toString();
+             }
+             
+             LotteryIssueResult issueResult = new LotteryIssueResult();
+             issueResult.setCode(lotteryNumber);
+             issueResult.setIssue(issue);
+             issueResult.setTime(onlineStr);
+             issueResult.setOpentimestamp(String.valueOf(onlineDateTime.getTime()));
+             writeFilePool.submit(new LotteryResultSaveTask(drawConfig, issueResult));
+             queue.add(issue);
+         }
+         while (queue.size() > 10) {
+             queue.poll();
+         }
+	}
+
+    private void getManycaiNew(DrawConfig drawConfig, Queue<String> queue) {
+        String spiderIp = drawConfig.getSpiderIp();
+        if (StringUtils.isBlank(spiderIp)) {
+            logger.error("getManycai host:为空");
+            return;
+        }
+        String token = drawConfig.getToken();
+        if (StringUtils.isBlank(token)) {
+            logger.error("getManycai token:为空");
+            return;
+        }
+        String url = "/" + drawConfig.getToken();
+        if(drawConfig.getLotteryCode().contains("HENEI60SSC")||drawConfig.getLotteryCode().contains("HENEI300SSC")) {
+        	 if (drawConfig.getLotteryCode().contains("HENEI60SSC")) {
+                 url += "/p/5.json";
+             }
+             if (drawConfig.getLotteryCode().contains("HENEI300SSC")) {
+                 url += "/hn300-5.json";
+             }
+        }else {
+        	 url +="/"+drawConfig.getToCode()+ "-5.json";
+        }
+       
+        
+        String hostDomain = StringUtils.trim(spiderIp);
+        String response = get(hostDomain, url);
+
+        logger.info("getManycai lottery:{},json:{}", drawConfig.getLotteryCode(), response);
+        if (StringUtils.isBlank(response)) {
+            logger.error("getManycai response为空 lottery:{},json:{}", drawConfig.getLotteryCode(), response);
+            return;
+        }
+        ManyCaiAMNEW am = null;
+       
+        try {
+        	am = gson.fromJson(StringUtils.trim(response),ManyCaiAMNEW.class);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        if (am == null) {
+            return;
+        }
+        ArrayList<ManyCaiAM> issues = am.getHN60();
+        if (CollectionUtils.isEmpty(issues)) {
+            return;
+        }
+
+        for (ManyCaiAM entry : issues) {
+        	 if (queue.contains(entry.getIssue())) {
+        		 continue;
+        	 }
+            Date onlineDateTime = null;
+            String issue = entry.getIssue();
+            
+            if(drawConfig.getToCode().contains("GD11X5")||drawConfig.getToCode().contains("SD11X5")) {
+            	issue = "20"+entry.getIssue();
+            }
+            if(drawConfig.getToCode().contains("XGLHC")) {
+            	issue = "20"+entry.getIssue();
+            	String [] issueArr =entry.getIssue().split("/");
+            	issue = issueArr[1];
+            }
+            if (drawConfig.getConverter() != null) {
+                issue = drawConfig.getConverter().convert(issue);
+            }
+            String onlineStr = entry.getOpendate();
+            try {
+                onlineDateTime = SimpleParse.parse(String.valueOf(onlineStr));
+            } catch (ParseException e) {
+                logger.error(e.getMessage(), e);
+            }
+            String lotteryNumber = null;
+            lotteryNumber = entry.getCode();
+            if(drawConfig.getToCode().contains("XGLHC")) {
+            	lotteryNumber=lotteryNumber.replaceAll("+", ",");
+            }
+            if(drawConfig.getToCode().contains("11X5")||drawConfig.getToCode().contains("XGLHC")) {
+            	StringBuffer codeStr=new StringBuffer();
+                String []codeArr = lotteryNumber.split(",");
+                for(String tempCode: codeArr) {
+	            	 String formatCode =  String.format("%02d", Integer.parseInt(tempCode));
+	            	 if(codeStr.length()>0) {
+	            		 codeStr.append(",");
+	            	 }
+	            	 codeStr.append(formatCode);
+                }
+            	 lotteryNumber=codeStr.toString();
+            }
+            notifyNewIssue(drawConfig.getLotteryCode(), drawConfig, issue, lotteryNumber, onlineStr,
+                    String.valueOf(onlineDateTime.getTime() / 1000), null);
+            queue.add(issue);
+        }
+        while (queue.size() > 10) {
+            queue.poll();
+        }
+
+    }
+    
     private void getManycai(DrawConfig drawConfig, Queue<String> queue) {
         String spiderIp = drawConfig.getSpiderIp();
         if (StringUtils.isBlank(spiderIp)) {
@@ -4236,15 +4502,15 @@ public class ApiPlusService {
                 		 String[] arr = tencentOnline.getCode().split("\\|");
                 		 if(arr.length == 3) {
                 			 String tempCode = arr[0];
-                			 //String txidHash = arr[1];
-                			 String blockHash = arr[2];
-                			 onlineCode = blockHash;
+                			 String txidHash = arr[1];
+                			// String blockHash = arr[2];
+                			 onlineCode = txidHash;
                 			 lotteryNumber = tempCode;
                 		 } if(arr.length == 4) {
                 			 String tempCode = arr[0];
-                			 //String txidHash = arr[1];
-                			 String blockHash = arr[3];
-                			 onlineCode = blockHash;
+                			 String txidHash = arr[1];
+//                			 String blockHash = arr[3];
+                			 onlineCode = txidHash;
                 			 lotteryNumber = tempCode;
                 		 }else {
                 			 lotteryNumber = tencentOnline.getCode();
@@ -4254,21 +4520,40 @@ public class ApiPlusService {
                 		 
                 		 if(arr.length == 3) {
                 			 String tempCode = arr[0];
-                			 //String txidHash = arr[1];
-                			 String blockHash = arr[2];
-                			 onlineCode = blockHash;
+                			 String txidHash = arr[1];
+//                			 String blockHash = arr[2];
+                			 onlineCode = txidHash;
                 			 lotteryNumber = tempCode;
                 		 } if(arr.length == 4) {
                 			 String tempCode = arr[0];
-                			 //String txidHash = arr[1];
-                			 String blockHash = arr[3];
-                			 onlineCode = blockHash;
+                			 String txidHash = arr[1];
+//                			 String blockHash = arr[3];
+                			 onlineCode = txidHash;
                 			 lotteryNumber = tempCode;
                 		 }else {
                 			 lotteryNumber = tencentOnline.getCode();
                 		 }
                 		 lotteryNumber = formartHASH60NNC(lotteryNumber);
-                	}else {
+                	}else if (drawConfig.getLotteryCode().contains("HASH60PK10")){
+	               		 String[] arr = tencentOnline.getCode().split("\\|");
+	            		 
+	               		 if(arr.length == 3) {
+//	               			 String tempCode = arr[0];
+	               			 String txidHash = arr[1];
+	//               			 String blockHash = arr[2];
+	               			 onlineCode = txidHash;
+	               			 lotteryNumber = txidHash;
+	               		 } if(arr.length == 4) {
+//	               			 String tempCode = arr[0];
+	               			 String txidHash = arr[1];
+	//               			 String blockHash = arr[3];
+	               			 onlineCode = txidHash;
+	               			 lotteryNumber = txidHash;
+	               		 }else {
+	               			 lotteryNumber = tencentOnline.getCode();
+	               		 }
+	               		 lotteryNumber = formartHASH60PK10(lotteryNumber);
+	               	}else {
                 		 lotteryNumber = tencentOnline.getCode();
                          onlineCode = tencentOnline.getYuLiu();
                 	}
@@ -4295,7 +4580,38 @@ public class ApiPlusService {
     
    
 
-    private String formartHASH60NNC(String code) {
+ private static String formartHASH60PK10(String lotteryNumber) {
+    	
+        String[] array = {"01","02","03","04","05","06","07","08","09","10"};
+        Set<String> set = new HashSet<>(Arrays.asList(array));
+    	String[] arr = lotteryNumber.split("");
+    	List<String> list = new ArrayList<String>();
+    	
+		
+		for(int i=arr.length-1;i>=0;i--) {
+			if(list.size() >= 10) {
+				break;
+			}
+			String tempNum = arr[i];
+			if(StringUtils.isNumeric(tempNum)) {
+				int tempNumInt = Integer.parseInt(arr[i]);
+				String tempStr = "";
+				if(tempNumInt == 0) {
+					tempStr = "10";
+				}else {
+					tempStr = "0"+tempNumInt;
+				}
+				if(set.contains(tempStr)) {
+					list.add(tempStr);
+					set.remove(tempStr);
+				}
+			}
+		}
+		list.addAll(new ArrayList<>(set));
+		return StringUtils.join(list,",");
+	}
+
+	private String formartHASH60NNC(String code) {
     	String[] codeArr = code.split(",");
     	List<String> list = new ArrayList<String>();
     	
@@ -4767,9 +5083,11 @@ public class ApiPlusService {
         String url = Tencent77tjHost+"/api/tencent/onlineim";
         
         
+        String response = httpConnectionManager.get(url);
+        
 //        String response = httpConnectionManager.get(url);
         
-        String response = get(Tencent77tjHost, url);
+//        String response = get(Tencent77tjHost, url);
         logger.info("QIQU60SSC url:{} spider:{}",url, response);
         ArrayList<TencentOnline> issues = null;
         if (!StringUtils.isEmpty(response)) {
@@ -4888,6 +5206,21 @@ public class ApiPlusService {
 
         return result;
     }
+    
+    private static String buildSteamNumber(String zaiXianNum,String zhengZaiYouXiNum) {
+    	String [] zaiXianNumArr = zaiXianNum.split("");
+    	String [] zhengZaiYouXiNumArr = zhengZaiYouXiNum.split("");
+    	List<String> list =new ArrayList<String>();
+    	
+    	for(int i=zaiXianNumArr.length-3; i <= zaiXianNumArr.length-1;i++) {
+    		list.add(zaiXianNumArr[i]);
+    	}
+    	for(int i=zhengZaiYouXiNumArr.length-2; i <= zhengZaiYouXiNumArr.length-1;i++) {
+    		list.add(zhengZaiYouXiNumArr[i]);
+    	}
+        return StringUtils.join(list,",");
+    }
+    
 
     private void getFromCaipiaokong(DrawConfig drawConfig, Queue<String> queue) {
         String url = buildCaipiaokongUrl(drawConfig);
@@ -5428,7 +5761,7 @@ public class ApiPlusService {
 // 			if(i>=1 && i<=4) {
 // 				strBuffer.append(",");
 // 				strBuffer.append(tempNum);
-// 			}
+// 			}m
 // 			sum +=tempNum;
 // 		}
 // 		String [] arr2 = volAmountStr1.split("");
@@ -5443,8 +5776,8 @@ public class ApiPlusService {
 //    	String formatOpenCode = "02 11 10 09 07";
 //    	formatOpenCode= formatOpenCode.replaceAll(" ", ",");
 //    	System.out.println(formatOpenCode);
-    	String QiquNumber = "5,5,7,1,3";
-    	String heiNeiNumber = "4,5,1,5,6";
+    	String QiquNumber = "0,2,3,3,9";
+    	String heiNeiNumber = "5,4,1,7,7";
     	 String[] qiQuNumberArr =QiquNumber.split(",");
          String[] heNeiNumberArr =heiNeiNumber.split(",");
          String [] numArr = new String[5];

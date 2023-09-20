@@ -21,7 +21,36 @@ public class Demo {
 
 	static Gson gson = new GsonBuilder().setDateFormat("yyyy-MM-dd HH:mm:ss").create();
 	
+	public static void main8989(String[] args) {
+		System.out.println(0%2);
+	}
+	
+	
 	public static void main(String[] args) {
+		File file = new File("C:\\Users\\Administrator\\Desktop\\2019\\jk\\jk");
+		File[] listFiles = file.listFiles();
+		StringBuilder str = new StringBuilder();
+		
+		for(File tempFile : listFiles) {
+			String name = tempFile.getName();
+			int indexOf = name.indexOf(".");
+			String realName = name.substring(0,indexOf);
+			System.out.println(realName);
+			
+			String tjStr = tj3(realName);
+			str.append(tjStr);
+		}
+		try {
+			File file2 = new File("C:\\\\Users\\\\Administrator\\\\Desktop\\\\2019\\\\tj2.txt");
+			FileUtils.write(file2, str.toString());
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	
+	
+	public static void main222(String[] args) {
 		File file = new File("C:\\\\Users\\\\Administrator\\\\Desktop\\\\2019\\\\hash");
 		File[] listFiles = file.listFiles();
 		StringBuilder str = new StringBuilder();
@@ -41,6 +70,41 @@ public class Demo {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+	
+	public static  String tj3(String dateStr) {
+		try {
+			String path1 = "C:\\\\Users\\\\Administrator\\\\Desktop\\\\2019\\\\jk\\\\jk\\"+dateStr+".json";
+			String json1 = FileUtils.readFileToString(new File(path1), "utf-8");
+			List<LotteryIssueResult> list1 = gson.fromJson(json1, new TypeToken<List<LotteryIssueResult>>(){}.getType());
+			  
+			  int cout = list1.size();
+			  int shuang = 0;
+			  
+			  for(LotteryIssueResult issue : list1) {
+				  String code = issue.getCode();
+				  
+				  String[] arr = code.split("\\|");
+				  List<Integer> last5NumberList = getLast5NumberList(arr[2]);
+				  int lastNum = last5NumberList.get(4);
+				  
+				  if(lastNum %2 == 0) {
+					  shuang++;
+				  }
+				 
+				 
+			  }
+			  StringBuilder str = new StringBuilder();
+			  BigDecimal pe = new BigDecimal(shuang*100).divide(new BigDecimal(cout), 4,BigDecimal.ROUND_DOWN);
+			  str.append("日期:").append(dateStr).append("双出现的次数:").append(shuang).append("出现的概率:").append(pe.doubleValue()).append("%").append("\n");
+//			  str.append("\n").append("\n").append("\n").append("\n").append("\n").append("\n").append("\n").append("\n").append("\n").append("\n").append("\n").append("\n");
+			  System.out.println(str.toString());
+			  return str.toString();
+			  
+		}  catch (Exception e) {
+			e.printStackTrace();
+		}
+	 	return "";
 	}
 	
 	public static  String tj2(String dateStr) {

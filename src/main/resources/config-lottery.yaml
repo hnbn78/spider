@@ -1,7 +1,9 @@
 apiplus:
   -
-   lotteryCode: HEQI60SSC
-   toCode: HEQI60SSC
+   lotteryCode: 3DFC
+   toCode: FC3D
    period: 5000
-   route: cnd28File
-   filePath: /data/openResult/HEQI60SSC
+   route: manycaiFilenew
+   spiderIp: vip.manycai.com
+   token: K263a055901ded9
+   filePath: /data/openResult/3DFC

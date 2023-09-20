@@ -18,6 +18,7 @@ import com.a3.lottery.module.LotteryIssueResultComparator;
 import com.google.common.reflect.TypeToken;
 import com.google.gson.Gson;
 import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.MalformedJsonException;
 
 public class LotteryResultSaveTask extends Thread {
 
@@ -105,13 +106,23 @@ public class LotteryResultSaveTask extends Thread {
     private void saveRecentResult(DrawConfig drarConfig, LotteryIssueResult issueResult) {
         String recentFileName = getRecentFileName(drarConfig);
         List<LotteryIssueResult> results = null;
-        try {
-            String contents = FileUtils.readFileToString(new File(recentFileName));
+        File file = new File(recentFileName);
+		try {
+            String contents = FileUtils.readFileToString(file);
             results = gson.fromJson(StringUtils.trim(contents), new TypeToken<ArrayList<LotteryIssueResult>>() {
             }.getType());
+        } catch (MalformedJsonException e) {
+            e.printStackTrace();
+            boolean deleteFlag = false;
+             try {
+				deleteFlag = file.delete();
+			} catch (Exception e1) {
+				e1.printStackTrace();
+			}
+            logger.info("读取文件:{} 报错,直接先删除,删除结果:{}",recentFileName,deleteFlag);
         } catch (IOException e) {
             e.printStackTrace();
-        }
+        } 
         if (results == null) {
             results = new ArrayList<LotteryIssueResult>();
         } else {
@@ -130,7 +141,7 @@ public class LotteryResultSaveTask extends Thread {
         }
         try {
             String contents = gson.toJson(results);
-            FileUtils.write(new File(recentFileName), contents);
+            FileUtils.write(file, contents);
         } catch (IOException e) {
             e.printStackTrace();
         }
